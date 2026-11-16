@@ -1,0 +1,9 @@
+{
+  "version": "eba129abe0b251f0",
+  "source_samples_sha256": "dbb160fd9c53f594ffd4f9a4fb331f33ed47ce6dc62754ab58ae8c02aa0139c5",
+  "sample_count": 1463,
+  "question_count": 323,
+  "group_count": 15,
+  "seed": 20261116,
+  "policy": "Fixed groups; each sample appears once; a question_id appears at most once per group."
+}
