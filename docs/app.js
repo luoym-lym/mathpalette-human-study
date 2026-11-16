@@ -6,7 +6,75 @@ let catalog, state, storageKey, active = null, page = 0, noticeTimeout;
 const pageSize = 15;
 const escapeHTML = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const groupNumber = group => group.id.slice(1);
-const getProgress = group => state.groups[group.id] || {answers:[], elapsed:0, draft:'', complete:false};
+let busy = false;
+function getProgress(group) {
+  let progress = state.groups[group.id];
+  if (!progress) progress = state.groups[group.id] = {answers:[], complete:false};
+  if (progress.format !== 2) {
+    const oldAnswers = progress.answers || [];
+    const next = oldAnswers.length;
+    progress.answers = group.samples.map((sample, i) => oldAnswers[i] || {
+      sample_id:sample.id, answer:i === next ? progress.draft || '' : '',
+      time_seconds:i === next ? (progress.elapsed || 0) / 1000 : 0
+    });
+    progress.cursor = Math.min(next, group.samples.length - 1);
+    progress.view = next === group.samples.length ? 'name' : 'question';
+    progress.format = 2;
+    delete progress.elapsed;
+    delete progress.draft;
+  }
+  return progress;
+}
+const answeredCount = progress => progress.answers.filter(item => item.answer.trim()).length;
+const isLocked = progress => progress.complete || progress.pending || progress.withdrawing;
+function newReceipt(name) {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return {name, token:Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')};
+}
+function submissionPayload(group) {
+  const progress = getProgress(group);
+  return {version:catalog.version, group_id:group.id, english_name:progress.receipt.name,
+    receipt_token:progress.receipt.token, answers:progress.answers.map(item => ({
+      sample_id:item.sample_id, answer:item.answer,
+      time_seconds:Math.round(item.time_seconds * 1000) / 1000
+    }))};
+}
+async function rpc(endpoint, payload) {
+  const config = window.MATHPALETTE_CONFIG || {};
+  if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/.test(config.supabaseUrl || '') ||
+      !(config.supabasePublishableKey || '').startsWith('sb_publishable_')) {
+    throw new Error('Submissions are not open yet. Please contact the study organizer.');
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
+  try {
+    const response = await fetch(config.supabaseUrl + '/rest/v1/rpc/' + endpoint, {
+      method:'POST', headers:{'Content-Type':'application/json', apikey:config.supabasePublishableKey},
+      body:JSON.stringify({payload}), signal:controller.signal
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.code === 'PGRST202'
+      ? 'The study organizer needs to enable the updated submission service. Your work is saved.'
+      : result.message || 'The request could not be completed.');
+    return result;
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error('The connection took too long. Please retry.');
+    throw error;
+  } finally { clearTimeout(timeout); }
+}
+function resetGroup(group) {
+  const progress = getProgress(group);
+  if (busy || isLocked(progress)) return;
+  stopTimer();
+  if (!window.confirm('Clear all answers and recorded time for this group and start again? Other groups will be kept.')) {
+    renderQuestion(group); return;
+  }
+  delete state.groups[group.id];
+  if (!save()) { state.groups[group.id] = progress; renderQuestion(group); return; }
+  renderQuestion(group);
+  notify('This group has been cleared. You can start again.');
+}
+
 
 function notify(message) {
   const node = document.querySelector('#notice');
@@ -24,7 +92,7 @@ function save() {
 function checkpoint() {
   if (!active) return;
   if (active.started !== null) {
-    active.progress.elapsed += performance.now() - active.started;
+    active.record.time_seconds += (performance.now() - active.started) / 1000;
     active.started = null;
   }
   save();
@@ -68,28 +136,35 @@ function renderCards() {
   const offset = page * pageSize;
   document.querySelector('#groups').innerHTML = catalog.groups.slice(offset, offset + pageSize).map((group, i) => {
     const progress = getProgress(group);
-    const started = progress.answers.length > 0 || progress.elapsed > 0;
-    const tag = progress.complete ? 'Completed' : started ? 'In progress' : 'Open';
-    return `<a class="group-card ${i === 0 && !progress.complete ? 'featured' : ''}" href="#group/${group.id}"><div class="card-top"><span class="group-number">${groupNumber(group)}</span><span class="tag">${tag}</span></div><h3>Group ${groupNumber(group)}</h3><p>${group.samples.length} questions · Mixed topics</p><div class="card-bottom"><span>${progress.complete ? 'View completion' : started ? `Continue · ${progress.answers.length}/${group.samples.length}` : 'Start this group'}</span><span aria-hidden="true">${progress.complete ? '✓' : '↗'}</span></div></a>`;
+    const count = answeredCount(progress);
+    const started = count > 0 || progress.answers.some(item => item.time_seconds > 0);
+    const tag = progress.withdrawing ? 'Withdrawing' : progress.complete ? 'Completed' : progress.pending ? 'Pending' : started ? 'In progress' : 'Open';
+    return `<a class="group-card ${i === 0 && !progress.complete ? 'featured' : ''}" href="#group/${group.id}"><div class="card-top"><span class="group-number">${groupNumber(group)}</span><span class="tag">${tag}</span></div><h3>Group ${groupNumber(group)}</h3><p>${group.samples.length} questions · Mixed topics</p><div class="card-bottom"><span>${progress.complete ? 'View completion' : started ? `Continue · ${count}/${group.samples.length}` : 'Start this group'}</span><span aria-hidden="true">${progress.complete ? '✓' : '↗'}</span></div></a>`;
   }).join('');
   document.querySelector('#page-info').textContent = `Showing ${offset + 1}–${Math.min(offset + pageSize, catalog.groups.length)} of ${catalog.groups.length} groups`;
   document.querySelector('#previous-page').disabled = page === 0;
   document.querySelector('#next-page').disabled = offset + pageSize >= catalog.groups.length;
 }
 
+
 function renderQuestion(group) {
   const progress = getProgress(group);
-  state.groups[group.id] = progress;
+  if (progress.withdrawing || progress.pending) return renderPending(group);
   if (progress.complete) return renderThanks(group);
-  if (progress.answers.length === group.samples.length) return renderName(group);
-  const index = progress.answers.length;
+  if (progress.view === 'review') return renderReview(group);
+  if (progress.view === 'name') return renderName(group);
+  const index = progress.cursor;
   const sample = group.samples[index];
-  app.innerHTML = `<div class="workspace-top"><a class="text-button" href="#">← Pause & all groups</a><span class="workspace-meta">Group ${groupNumber(group)} <span class="footer-dot">/</span> Question ${index + 1} of ${group.samples.length}</span></div><div class="progress-track" role="progressbar" aria-label="Questions completed" aria-valuenow="${index}" aria-valuemin="0" aria-valuemax="${group.samples.length}"><div class="progress-bar" style="width:${index / group.samples.length * 100}%"></div></div>
-  <section class="question-layout"><div class="diagram-card"><button class="diagram-button" aria-label="Enlarge question diagram"><img id="question-image" src="./${escapeHTML(sample.image)}" alt="Diagram for question ${index + 1}"></button><div class="diagram-caption"><span>Take a closer look</span><span class="zoom-icon" aria-hidden="true">⤢</span></div><p class="error" id="image-error" role="alert"></p></div><div class="question-panel"><p class="question-label">${escapeHTML(({Analytics:'Functions & graphs',PlaneGeometry:'Plane geometry',SolidGeometry:'Solid geometry'})[sample.branch])}</p><h1>A fresh perspective.</h1><div class="question-text" id="question-text"></div><form id="answer-form"><label class="answer-label" for="answer">Your answer</label><textarea class="answer-input" id="answer" maxlength="5000" placeholder="Type your answer here…" aria-describedby="answer-help">${escapeHTML(progress.draft)}</textarea><p class="input-help" id="answer-help">Plain text is perfect: x^2, 1/3, sqrt(2), or an option letter.<br>No special formatting or explanation needed.</p><div class="answer-actions"><button type="button" class="understated" id="skip-answer" disabled>I don't know</button><button type="submit" class="primary-button" id="next-answer" disabled>${index + 1 === group.samples.length ? 'Finish this group' : 'Next question'} <span aria-hidden="true">→</span></button></div><p class="error" id="answer-error" role="alert"></p></form><p class="save-note">Your progress is saved on this browser.<br>Submitted answers are final. Take the time you need.</p></div></section>`;
+  const record = progress.answers[index];
+  const count = answeredCount(progress);
+  app.innerHTML = `<div class="workspace-top"><a class="text-button" href="#">← Pause & all groups</a><span class="workspace-meta">Group ${groupNumber(group)} · Question ${index + 1} of ${group.samples.length}</span></div><div class="progress-track" role="progressbar" aria-label="Questions answered" aria-valuenow="${count}" aria-valuemin="0" aria-valuemax="${group.samples.length}"><div class="progress-bar" style="width:${count / group.samples.length * 100}%"></div></div>
+  <section class="question-layout"><div class="diagram-card"><button class="diagram-button" aria-label="Enlarge question diagram"><img id="question-image" src="./${escapeHTML(sample.image)}" alt="Diagram for question ${index + 1}"></button><div class="diagram-caption"><span>Take a closer look</span><span aria-hidden="true">⤢</span></div><p class="error" id="image-error" role="alert"></p></div><div class="question-panel"><p class="question-label">${escapeHTML(({Analytics:'Functions & graphs',PlaneGeometry:'Plane geometry',SolidGeometry:'Solid geometry'})[sample.branch])}</p><h1>A fresh perspective.</h1><div class="question-text" id="question-text"></div>
+  <form id="answer-form"><label class="answer-label" for="answer">Your answer</label><textarea class="answer-input" id="answer" maxlength="5000" placeholder="Type your answer here…" aria-describedby="answer-help">${escapeHTML(record.answer)}</textarea><p class="input-help" id="answer-help">Plain text is perfect: x^2, 1/3, sqrt(2), or an option letter.<br>No special formatting or explanation needed.</p><div class="answer-actions"><button type="button" class="understated" id="skip-answer" disabled>I don't know</button><button type="submit" class="primary-button" id="next-answer" disabled>${index + 1 === group.samples.length ? 'Finish this group' : 'Next question'} →</button></div><p class="error" id="answer-error" role="alert"></p></form>
+  <div class="question-navigation"><button class="secondary-button" id="previous-question" ${index === 0 ? 'disabled' : ''}>← Previous question</button><button class="secondary-button" id="review-answers">All questions</button><button class="understated" id="clear-answer">Clear this answer</button></div><p class="save-note">Your progress is saved on this browser. You can return to any question and edit your answer before submitting.</p><button class="understated danger-text" id="reset-group">Clear group & start again</button></div></section>`;
   document.querySelector('#question-text').textContent = sample.question;
   if (window.renderMathInElement) renderMathInElement(document.querySelector('#question-text'), {delimiters:[{left:'$$',right:'$$',display:true},{left:'\\[',right:'\\]',display:true},{left:'$',right:'$',display:false},{left:'\\(',right:'\\)',display:false}],throwOnError:false,trust:false});
   const image = document.querySelector('#question-image');
-  active = {progress, started:null, ready:false};
+  active = {record, started:null, ready:false};
   const current = active;
   const ready = async () => {
     await document.fonts.ready;
@@ -103,76 +178,138 @@ function renderQuestion(group) {
   image.onerror = () => { if (active === current) document.querySelector('#image-error').textContent = 'The diagram could not load. Please reload this page to try again.'; };
   if (image.complete && image.naturalWidth) ready();
   document.querySelector('.diagram-button').onclick = () => { dialog.querySelector('img').src = image.src; dialog.showModal(); };
-  document.querySelector('#answer').oninput = event => { progress.draft = event.target.value; save(); };
-  const submitAnswer = answer => {
+  document.querySelector('#answer').oninput = event => { record.answer = event.target.value; save(); };
+  const next = answer => {
     if (!active || !active.ready) return;
     if (!answer.trim()) { document.querySelector('#answer-error').textContent = 'Enter an answer, or choose “I don’t know” to continue.'; return; }
-    checkpoint();
-    const elapsed = progress.elapsed;
-    progress.answers.push({sample_id:sample.id, answer, time_seconds:Math.round(elapsed) / 1000});
-    progress.elapsed = 0;
-    progress.draft = '';
-    if (!save()) { progress.answers.pop(); progress.elapsed = elapsed; progress.draft = answer; resumeTimer(); return; }
-    active = null;
-    renderQuestion(group);
-    window.scrollTo(0,0);
+    record.answer = answer;
+    if (!save()) return;
+    if (index + 1 < group.samples.length) openQuestion(group, index + 1);
+    else showGroupView(group, answeredCount(progress) === group.samples.length ? 'name' : 'review');
   };
-  document.querySelector('#answer-form').onsubmit = event => { event.preventDefault(); submitAnswer(document.querySelector('#answer').value); };
-  document.querySelector('#skip-answer').onclick = () => submitAnswer("I don't know");
+  document.querySelector('#answer-form').onsubmit = event => { event.preventDefault(); next(document.querySelector('#answer').value); };
+  document.querySelector('#skip-answer').onclick = () => next("I don't know");
+  document.querySelector('#previous-question').onclick = () => openQuestion(group, index - 1);
+  document.querySelector('#review-answers').onclick = () => showGroupView(group, 'review');
+  document.querySelector('#clear-answer').onclick = () => {
+    record.answer = ''; document.querySelector('#answer').value = ''; save(); document.querySelector('#answer').focus();
+  };
+  document.querySelector('#reset-group').onclick = () => resetGroup(group);
 }
-
+function openQuestion(group, index) {
+  const progress = getProgress(group);
+  if (isLocked(progress) || index < 0 || index >= group.samples.length) return;
+  stopTimer();
+  progress.cursor = index;
+  progress.view = 'question';
+  save();
+  renderQuestion(group);
+  window.scrollTo(0,0);
+}
+function showGroupView(group, view) {
+  stopTimer();
+  getProgress(group).view = view;
+  save();
+  renderQuestion(group);
+  window.scrollTo(0,0);
+}
+function renderReview(group) {
+  const progress = getProgress(group);
+  const count = answeredCount(progress);
+  app.innerHTML = `<div class="workspace-top"><a class="text-button" href="#">← Pause & all groups</a><span class="workspace-meta">Group ${groupNumber(group)}</span></div><section class="review-card"><h1>Your answers.</h1><p>${count} of ${group.samples.length} questions answered. Select a question to review, change, or clear its answer.</p><p class="save-note">Filled circles are answered. Outlined circles still need an answer.</p><div class="question-grid">${progress.answers.map((item,i) => `<button class="question-number ${item.answer.trim() ? 'answered' : ''}" data-question="${i}" aria-label="Question ${i + 1}, ${item.answer.trim() ? 'answered' : 'unanswered'}">${i + 1}</button>`).join('')}</div><button class="primary-button" id="continue-review">${count === group.samples.length ? 'Continue to your name →' : 'Continue answering →'}</button><p><button class="understated danger-text" id="reset-group">Clear group & start again</button></p></section>`;
+  document.querySelectorAll('[data-question]').forEach(button => { button.onclick = () => openQuestion(group, Number(button.dataset.question)); });
+  document.querySelector('#continue-review').onclick = () => count === group.samples.length
+    ? showGroupView(group, 'name') : openQuestion(group, progress.answers.findIndex(item => !item.answer.trim()));
+  document.querySelector('#reset-group').onclick = () => resetGroup(group);
+}
 function renderName(group) {
-  app.innerHTML = `<div class="workspace-top"><a class="text-button" href="#">← Pause & all groups</a><span class="workspace-meta">Group ${groupNumber(group)} · All questions answered</span></div><section class="finish-card"><div class="finish-icon" aria-hidden="true">✓</div><div class="eyebrow" style="justify-content:center">One last thing</div><h1>Who can we thank?</h1><p>You've answered all ${group.samples.length} questions.<br>Add your English name to submit your responses.</p><form id="name-form"><label for="english-name" class="answer-label">Your English name</label><input id="english-name" class="name-input" autocomplete="name" maxlength="80" required placeholder="e.g. Alex Chen" value="${escapeHTML(state.name || '')}"><p class="input-help">Your name identifies your answers and may be used to thank volunteers in a future paper.</p><p class="error" id="submit-error" role="alert"></p><button class="primary-button full-width" type="submit" id="submit-group">Submit my responses <span aria-hidden="true">→</span></button></form></section>`;
-  document.querySelector('#name-form').onsubmit = async event => {
+  const progress = getProgress(group);
+  if (answeredCount(progress) !== group.samples.length) { progress.view = 'review'; return renderReview(group); }
+  app.innerHTML = `<div class="workspace-top"><a class="text-button" href="#">← Pause & all groups</a><span class="workspace-meta">Group ${groupNumber(group)} · All questions answered</span></div><section class="finish-card"><div class="finish-icon" aria-hidden="true">✓</div><div class="eyebrow" style="justify-content:center">One last thing</div><h1>Who can we thank?</h1><p>You've answered all ${group.samples.length} questions.<br>Add your English name to submit your responses.</p><button class="secondary-button" id="review-answers">← Review or edit answers</button><form id="name-form"><label for="english-name" class="answer-label">Your English name</label><input id="english-name" class="name-input" autocomplete="name" maxlength="80" required placeholder="e.g. Alex Chen" value="${escapeHTML(state.name || '')}"><p class="input-help">Your name identifies your answers and may be used to thank volunteers in a future paper.</p><p class="error" id="submit-error" role="alert"></p><button class="primary-button full-width" type="submit">Submit my responses →</button></form><button class="understated danger-text" id="reset-group">Clear group & start again</button></section>`;
+  document.querySelector('#review-answers').onclick = () => showGroupView(group, 'review');
+  document.querySelector('#reset-group').onclick = () => resetGroup(group);
+  document.querySelector('#name-form').onsubmit = event => {
     event.preventDefault();
     const name = document.querySelector('#english-name').value.trim();
-    if (!name) return;
+    if (!name || busy) return;
     state.name = name;
-    if (!save()) return;
-    const button = document.querySelector('#submit-group');
-    const error = document.querySelector('#submit-error');
-    button.disabled = true;
-    button.textContent = 'Submitting…';
-    error.textContent = '';
-    const config = window.MATHPALETTE_CONFIG || {};
-    if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/.test(config.supabaseUrl || '') ||
-        !(config.supabasePublishableKey || '').startsWith('sb_publishable_')) {
-      error.textContent = 'Submissions are not open yet. Your answers are saved on this browser; please contact the study organizer.';
-      button.disabled = false;
-      button.textContent = 'Submit my responses →';
-      return;
-    }
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 20000);
-    try {
-      const response = await fetch(config.supabaseUrl + '/rest/v1/rpc/submit_human_group', {
-        method:'POST',
-        headers:{'Content-Type':'application/json',apikey:config.supabasePublishableKey},
-        body:JSON.stringify({payload:{version:catalog.version,group_id:group.id,english_name:name,answers:getProgress(group).answers}}),
-        signal:controller.signal
-      });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.message || 'The submission could not be saved.');
-      if (result.saved !== true) throw new Error('The server did not confirm receipt. Please try again.');
-      state.groups[group.id].complete = true;
-      state.groups[group.id].name = name;
-      save();
-      if (location.hash === `#group/${group.id}`) renderThanks(group);
-    } catch (failure) {
-      error.textContent = failure.name === 'AbortError' ? 'The connection took too long. Your answers are saved on this browser; please try submitting again.' : `${failure.message} Your answers remain saved on this browser.`;
-      button.disabled = false;
-      button.textContent = 'Try submitting again →';
-    } finally { clearTimeout(timeout); }
+    progress.receipt = newReceipt(name);
+    progress.pending = true;
+    if (!save()) { progress.pending = false; progress.receipt = null; return; }
+    submitGroup(group);
   };
 }
-
+function renderPending(group, message = '') {
+  const progress = getProgress(group);
+  const withdrawing = progress.withdrawing;
+  app.innerHTML = `<section class="finish-card"><h1>${withdrawing ? 'Withdrawing responses.' : 'Sending your answers.'}</h1><p>${withdrawing ? 'Your answers will become an editable draft once withdrawal is confirmed.' : 'Your answers are saved on this browser. Keep them unchanged until the server confirms submission, or cancel the submission to edit them.'}</p><p class="error" role="alert">${escapeHTML(message)}</p><button class="primary-button full-width" id="retry-request" ${busy ? 'disabled' : ''}>${busy ? 'Please wait…' : withdrawing ? 'Retry withdrawal' : 'Retry submission'}</button>${!withdrawing ? `<button class="understated danger-text" id="cancel-submission" ${busy ? 'disabled' : ''}>Cancel submission & edit answers</button>` : ''}<p><a class="text-button" href="#">← All groups</a></p></section>`;
+  document.querySelector('#retry-request').onclick = () => withdrawing ? withdrawGroup(group) : submitGroup(group);
+  if (!withdrawing) document.querySelector('#cancel-submission').onclick = () => withdrawGroup(group);
+}
+async function submitGroup(group) {
+  const progress = getProgress(group);
+  if (busy || !progress.pending || progress.withdrawing) return;
+  busy = true;
+  renderPending(group);
+  let error = '';
+  try {
+    const result = await rpc('submit_human_group_v2', submissionPayload(group));
+    if (result.saved !== true) throw new Error('The server did not confirm receipt. Please retry.');
+    progress.complete = true;
+    progress.pending = false;
+    progress.name = progress.receipt.name;
+    save();
+  } catch (failure) { error = failure.message; }
+  finally { busy = false; }
+  if (location.hash === `#group/${group.id}`) {
+    if (progress.complete) renderThanks(group); else renderPending(group, error);
+  }
+}
+async function withdrawGroup(group) {
+  const progress = getProgress(group);
+  if (busy || (!isLocked(progress) && !progress.receipt)) return;
+  if (!progress.withdrawing && !window.confirm('Withdraw this group from the study? Your answers will stay on this browser so you can edit them or clear the group.')) return;
+  if (!progress.receipt) {
+    progress.receipt = {...newReceipt(progress.name || state.name), legacy:true};
+  }
+  progress.withdrawing = true;
+  if (!save()) return;
+  busy = true;
+  renderPending(group);
+  let error = '';
+  try {
+    // Legacy responses require an exact answer-and-time match before issuing a receipt.
+    if (progress.receipt.legacy) {
+      const claimed = await rpc('submit_human_group_v2', submissionPayload(group));
+      if (claimed.saved !== true) throw new Error('Could not verify your original submission.');
+      progress.receipt.legacy = false;
+      save();
+    }
+    const payload = submissionPayload(group);
+    delete payload.answers;
+    const result = await rpc('withdraw_human_group', payload);
+    if (result.withdrawn !== true) throw new Error('The server did not confirm withdrawal. Please retry.');
+    progress.complete = false;
+    progress.pending = false;
+    progress.withdrawing = false;
+    progress.receipt = null;
+    progress.view = 'review';
+    save();
+  } catch (failure) { error = failure.message; }
+  finally { busy = false; }
+  if (location.hash === `#group/${group.id}`) {
+    if (progress.withdrawing) renderPending(group, error);
+    else { renderReview(group); notify('Submission withdrawn. You can edit your answers or clear this group.'); }
+  }
+}
 function renderThanks(group) {
   const progress = getProgress(group);
-  app.innerHTML = `<section class="finish-card"><div class="finish-icon" aria-hidden="true">✧</div><div class="eyebrow" style="justify-content:center">A contribution that counts</div><h1>Thank you, ${escapeHTML(progress.name || state.name)}.</h1><p>Your answers have been received.<br>Thank you for sharing your time and your perspective with MathPalette.</p><p class="completion-detail">Group ${groupNumber(group)} · ${group.samples.length} responses submitted</p><a href="#" class="primary-button full-width">Explore another group <span aria-hidden="true">→</span></a><p class="save-note">You're also welcome to stop here. Every contribution helps.</p></section>`;
+  app.innerHTML = `<section class="finish-card"><div class="finish-icon" aria-hidden="true">✧</div><h1>Thank you, ${escapeHTML(progress.name || state.name)}.</h1><p>Your answers have been received.<br>Thank you for sharing your time and perspective with MathPalette.</p><p class="completion-detail">Group ${groupNumber(group)} · ${group.samples.length} responses submitted</p><a href="#" class="primary-button full-width">Explore another group →</a><button class="understated danger-text" id="withdraw-group">Withdraw submission</button><p class="save-note">You can withdraw using this browser to edit your answers or start again. Keep this browser's saved data until you are finished.</p></section>`;
+  document.querySelector('#withdraw-group').onclick = () => withdrawGroup(group);
 }
 
 function about() {
-  app.innerHTML = `<article class="about"><a class="text-button" href="#">← Back to the groups</a><h1>A different way<br>of seeing mathematics.</h1><p>MathPalette explores visual mathematical reasoning. Your responses help us understand how people solve problems presented with different diagrams.</p><p>Choose a group and answer its questions independently. Paper and pencil are welcome. Please do not use AI, search engines, or outside help.</p><p>Write your final answers in any ordinary text format. If you are unsure, give your best answer or select “I don't know”. You can pause and return using the same browser.</p><p>We collect your answers, the time spent on each question while this page is visible, and the English name you provide after completing a group. We do not ask for an email address or an account.</p><p>Your name identifies your responses and may be used in acknowledgments for a future paper. Answers are not graded on this website.</p><a href="#" class="primary-button">Choose a group <span aria-hidden="true">→</span></a></article>`;
+  app.innerHTML = `<article class="about"><a class="text-button" href="#">← Back to the groups</a><h1>A different way<br>of seeing mathematics.</h1><p>MathPalette explores visual mathematical reasoning. Your responses help us understand how people solve problems presented with different diagrams.</p><p>Choose a group and answer its questions independently. Paper and pencil are welcome. Please do not use AI, search engines, or outside help.</p><p>Write your final answers in any ordinary text format. If you are unsure, give your best answer or select “I don't know”. You can pause and return using the same browser, revisit any question, or clear an unfinished group and start again.</p><p>We collect your answers, the time spent on each question while this page is visible, and the English name you provide after completing a group. We do not ask for an email address or an account.</p><p>Your name identifies your responses and may be used in acknowledgments for a future paper. Answers are not graded on this website. After submitting, you can withdraw the group from this browser, then edit or clear your answers.</p><a href="#" class="primary-button">Choose a group <span aria-hidden="true">→</span></a></article>`;
 }
 
 function route() {
