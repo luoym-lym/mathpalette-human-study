@@ -18,3 +18,7 @@
 .question-number.answered{background:var(--green);color:white;border-color:var(--green)}
 .finish-card>.understated{margin-top:20px}
 @media(max-width:760px){.workspace-top{gap:16px;align-items:flex-start}.workspace-meta{text-align:right}.question-navigation .secondary-button{padding:10px 12px;font-size:12px}.review-card h1{font-size:36px}.question-grid{gap:8px;grid-template-columns:repeat(auto-fill,minmax(42px,1fr))}}
+
+.group-card-link{display:block}
+.clear-group-button{display:block;width:100%;margin-top:15px;padding:9px 12px;border:1px solid #d8cbc2;border-radius:6px;background:transparent;font-size:11px}
+.clear-group-button:hover{background:#f2e8e1}

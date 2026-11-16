@@ -8,7 +8,7 @@ Select one of 15 fixed groups, enter plain-text answers, and provide an English 
 
 Every sample occurs once across the groups. Original and Special versions of the same question, including separate Special variants, always belong to different groups. The assignment and order are fixed in docs/groups.json.
 
-Progress and drafts are saved in the same browser. A complete group is submitted to Supabase after the name form. Leaving the question or hiding the tab pauses timing. Previous question and All questions let participants revisit, edit, or clear individual answers. Revisiting a question accumulates time on that question. Clear group & start again deletes only that group's local answers and recorded time, after confirmation.
+Progress and drafts are saved in the same browser. A complete group is submitted to Supabase after the name form. Leaving the question or hiding the tab pauses timing. Previous question and All questions let participants revisit, edit, or clear individual answers. Revisiting a question accumulates time on that question. Clear group deletes only that group's local answers and recorded time, after confirmation. It is available directly on In progress home cards as well as inside a group. Clearing returns to the home page with Open status; timing starts again only when the participant explicitly opens the group.
 
 Completed groups can be withdrawn using the submitting browser. The server removes that group's responses and the browser keeps an editable draft. The participant may then resubmit or clear the group. An uncertain submission stays locked until retry or cancellation confirms its state. Clearing browser storage loses local progress and the ability to withdraw without the organizer.
 

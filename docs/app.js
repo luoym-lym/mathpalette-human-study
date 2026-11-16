@@ -65,14 +65,21 @@ async function rpc(endpoint, payload) {
 function resetGroup(group) {
   const progress = getProgress(group);
   if (busy || isLocked(progress)) return;
+  const wasActive = Boolean(active);
   stopTimer();
-  if (!window.confirm('Clear all answers and recorded time for this group and start again? Other groups will be kept.')) {
-    renderQuestion(group); return;
+  if (!window.confirm('Clear all answers and recorded time for Group ' + groupNumber(group) + '? Other groups will be kept.')) {
+    if (wasActive) renderQuestion(group);
+    return;
   }
   delete state.groups[group.id];
-  if (!save()) { state.groups[group.id] = progress; renderQuestion(group); return; }
-  renderQuestion(group);
-  notify('This group has been cleared. You can start again.');
+  if (!save()) {
+    state.groups[group.id] = progress;
+    if (wasActive) renderQuestion(group);
+    return;
+  }
+  location.hash = '#';
+  home();
+  notify('Group ' + groupNumber(group) + ' cleared. It is open again.');
 }
 
 
@@ -139,8 +146,11 @@ function renderCards() {
     const count = answeredCount(progress);
     const started = count > 0 || progress.answers.some(item => item.time_seconds > 0);
     const tag = progress.withdrawing ? 'Withdrawing' : progress.complete ? 'Completed' : progress.pending ? 'Pending' : started ? 'In progress' : 'Open';
-    return `<a class="group-card ${i === 0 && !progress.complete ? 'featured' : ''}" href="#group/${group.id}"><div class="card-top"><span class="group-number">${groupNumber(group)}</span><span class="tag">${tag}</span></div><h3>Group ${groupNumber(group)}</h3><p>${group.samples.length} questions · Mixed topics</p><div class="card-bottom"><span>${progress.complete ? 'View completion' : started ? `Continue · ${count}/${group.samples.length}` : 'Start this group'}</span><span aria-hidden="true">${progress.complete ? '✓' : '↗'}</span></div></a>`;
+    return `<article class="group-card ${i === 0 && !progress.complete ? 'featured' : ''}"><a class="group-card-link" href="#group/${group.id}"><div class="card-top"><span class="group-number">${groupNumber(group)}</span><span class="tag">${tag}</span></div><h3>Group ${groupNumber(group)}</h3><p>${group.samples.length} questions · Mixed topics</p><div class="card-bottom"><span>${progress.complete ? 'View completion' : started ? `Continue · ${count}/${group.samples.length}` : 'Start this group'}</span><span aria-hidden="true">${progress.complete ? '✓' : '↗'}</span></div></a>${started && !isLocked(progress) ? `<button class="clear-group-button danger-text" type="button" data-clear-group="${group.id}" aria-label="Clear group ${groupNumber(group)}">Clear group</button>` : ''}</article>`;
   }).join('');
+  document.querySelectorAll('[data-clear-group]').forEach(button => {
+    button.onclick = () => resetGroup(catalog.groups.find(group => group.id === button.dataset.clearGroup));
+  });
   document.querySelector('#page-info').textContent = `Showing ${offset + 1}–${Math.min(offset + pageSize, catalog.groups.length)} of ${catalog.groups.length} groups`;
   document.querySelector('#previous-page').disabled = page === 0;
   document.querySelector('#next-page').disabled = offset + pageSize >= catalog.groups.length;
@@ -160,7 +170,7 @@ function renderQuestion(group) {
   app.innerHTML = `<div class="workspace-top"><a class="text-button" href="#">← Pause & all groups</a><span class="workspace-meta">Group ${groupNumber(group)} · Question ${index + 1} of ${group.samples.length}</span></div><div class="progress-track" role="progressbar" aria-label="Questions answered" aria-valuenow="${count}" aria-valuemin="0" aria-valuemax="${group.samples.length}"><div class="progress-bar" style="width:${count / group.samples.length * 100}%"></div></div>
   <section class="question-layout"><div class="diagram-card"><button class="diagram-button" aria-label="Enlarge question diagram"><img id="question-image" src="./${escapeHTML(sample.image)}" alt="Diagram for question ${index + 1}"></button><div class="diagram-caption"><span>Take a closer look</span><span aria-hidden="true">⤢</span></div><p class="error" id="image-error" role="alert"></p></div><div class="question-panel"><p class="question-label">${escapeHTML(({Analytics:'Functions & graphs',PlaneGeometry:'Plane geometry',SolidGeometry:'Solid geometry'})[sample.branch])}</p><h1>A fresh perspective.</h1><div class="question-text" id="question-text"></div>
   <form id="answer-form"><label class="answer-label" for="answer">Your answer</label><textarea class="answer-input" id="answer" maxlength="5000" placeholder="Type your answer here…" aria-describedby="answer-help">${escapeHTML(record.answer)}</textarea><p class="input-help" id="answer-help">Plain text is perfect: x^2, 1/3, sqrt(2), or an option letter.<br>No special formatting or explanation needed.</p><div class="answer-actions"><button type="button" class="understated" id="skip-answer" disabled>I don't know</button><button type="submit" class="primary-button" id="next-answer" disabled>${index + 1 === group.samples.length ? 'Finish this group' : 'Next question'} →</button></div><p class="error" id="answer-error" role="alert"></p></form>
-  <div class="question-navigation"><button class="secondary-button" id="previous-question" ${index === 0 ? 'disabled' : ''}>← Previous question</button><button class="secondary-button" id="review-answers">All questions</button><button class="understated" id="clear-answer">Clear this answer</button></div><p class="save-note">Your progress is saved on this browser. You can return to any question and edit your answer before submitting.</p><button class="understated danger-text" id="reset-group">Clear group & start again</button></div></section>`;
+  <div class="question-navigation"><button class="secondary-button" id="previous-question" ${index === 0 ? 'disabled' : ''}>← Previous question</button><button class="secondary-button" id="review-answers">All questions</button><button class="understated" id="clear-answer">Clear this answer</button></div><p class="save-note">Your progress is saved on this browser. You can return to any question and edit your answer before submitting.</p><button class="understated danger-text" id="reset-group">Clear group</button></div></section>`;
   document.querySelector('#question-text').textContent = sample.question;
   if (window.renderMathInElement) renderMathInElement(document.querySelector('#question-text'), {delimiters:[{left:'$$',right:'$$',display:true},{left:'\\[',right:'\\]',display:true},{left:'$',right:'$',display:false},{left:'\\(',right:'\\)',display:false}],throwOnError:false,trust:false});
   const image = document.querySelector('#question-image');
@@ -216,7 +226,7 @@ function showGroupView(group, view) {
 function renderReview(group) {
   const progress = getProgress(group);
   const count = answeredCount(progress);
-  app.innerHTML = `<div class="workspace-top"><a class="text-button" href="#">← Pause & all groups</a><span class="workspace-meta">Group ${groupNumber(group)}</span></div><section class="review-card"><h1>Your answers.</h1><p>${count} of ${group.samples.length} questions answered. Select a question to review, change, or clear its answer.</p><p class="save-note">Filled circles are answered. Outlined circles still need an answer.</p><div class="question-grid">${progress.answers.map((item,i) => `<button class="question-number ${item.answer.trim() ? 'answered' : ''}" data-question="${i}" aria-label="Question ${i + 1}, ${item.answer.trim() ? 'answered' : 'unanswered'}">${i + 1}</button>`).join('')}</div><button class="primary-button" id="continue-review">${count === group.samples.length ? 'Continue to your name →' : 'Continue answering →'}</button><p><button class="understated danger-text" id="reset-group">Clear group & start again</button></p></section>`;
+  app.innerHTML = `<div class="workspace-top"><a class="text-button" href="#">← Pause & all groups</a><span class="workspace-meta">Group ${groupNumber(group)}</span></div><section class="review-card"><h1>Your answers.</h1><p>${count} of ${group.samples.length} questions answered. Select a question to review, change, or clear its answer.</p><p class="save-note">Filled circles are answered. Outlined circles still need an answer.</p><div class="question-grid">${progress.answers.map((item,i) => `<button class="question-number ${item.answer.trim() ? 'answered' : ''}" data-question="${i}" aria-label="Question ${i + 1}, ${item.answer.trim() ? 'answered' : 'unanswered'}">${i + 1}</button>`).join('')}</div><button class="primary-button" id="continue-review">${count === group.samples.length ? 'Continue to your name →' : 'Continue answering →'}</button><p><button class="understated danger-text" id="reset-group">Clear group</button></p></section>`;
   document.querySelectorAll('[data-question]').forEach(button => { button.onclick = () => openQuestion(group, Number(button.dataset.question)); });
   document.querySelector('#continue-review').onclick = () => count === group.samples.length
     ? showGroupView(group, 'name') : openQuestion(group, progress.answers.findIndex(item => !item.answer.trim()));
@@ -225,7 +235,7 @@ function renderReview(group) {
 function renderName(group) {
   const progress = getProgress(group);
   if (answeredCount(progress) !== group.samples.length) { progress.view = 'review'; return renderReview(group); }
-  app.innerHTML = `<div class="workspace-top"><a class="text-button" href="#">← Pause & all groups</a><span class="workspace-meta">Group ${groupNumber(group)} · All questions answered</span></div><section class="finish-card"><div class="finish-icon" aria-hidden="true">✓</div><div class="eyebrow" style="justify-content:center">One last thing</div><h1>Who can we thank?</h1><p>You've answered all ${group.samples.length} questions.<br>Add your English name to submit your responses.</p><button class="secondary-button" id="review-answers">← Review or edit answers</button><form id="name-form"><label for="english-name" class="answer-label">Your English name</label><input id="english-name" class="name-input" autocomplete="name" maxlength="80" required placeholder="e.g. Alex Chen" value="${escapeHTML(state.name || '')}"><p class="input-help">Your name identifies your answers and may be used to thank volunteers in a future paper.</p><p class="error" id="submit-error" role="alert"></p><button class="primary-button full-width" type="submit">Submit my responses →</button></form><button class="understated danger-text" id="reset-group">Clear group & start again</button></section>`;
+  app.innerHTML = `<div class="workspace-top"><a class="text-button" href="#">← Pause & all groups</a><span class="workspace-meta">Group ${groupNumber(group)} · All questions answered</span></div><section class="finish-card"><div class="finish-icon" aria-hidden="true">✓</div><div class="eyebrow" style="justify-content:center">One last thing</div><h1>Who can we thank?</h1><p>You've answered all ${group.samples.length} questions.<br>Add your English name to submit your responses.</p><button class="secondary-button" id="review-answers">← Review or edit answers</button><form id="name-form"><label for="english-name" class="answer-label">Your English name</label><input id="english-name" class="name-input" autocomplete="name" maxlength="80" required placeholder="e.g. Alex Chen" value="${escapeHTML(state.name || '')}"><p class="input-help">Your name identifies your answers and may be used to thank volunteers in a future paper.</p><p class="error" id="submit-error" role="alert"></p><button class="primary-button full-width" type="submit">Submit my responses →</button></form><button class="understated danger-text" id="reset-group">Clear group</button></section>`;
   document.querySelector('#review-answers').onclick = () => showGroupView(group, 'review');
   document.querySelector('#reset-group').onclick = () => resetGroup(group);
   document.querySelector('#name-form').onsubmit = event => {
