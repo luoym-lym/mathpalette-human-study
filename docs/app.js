@@ -116,7 +116,7 @@ setInterval(() => { if (active) { checkpoint(); resumeTimer(); } }, 1000);
 
 
 function home() {
-  app.innerHTML = `<section class="survey-home"><h1>MathPalette questionnaire</h1><p>Choose a group and answer independently. You can pause and continue in the same browser.</p><p>Enter your English name after completing the group. <a href="#about">Instructions</a></p><div class="groups" id="groups" aria-label="Question groups"></div></section>`;
+  app.innerHTML = `<section class="survey-home"><h1>MathPalette questionnaire</h1><p>Choose a group and answer independently. You can pause and continue in the same browser.</p><p>Enter your English name after completing the group.</p><div class="groups" id="groups" aria-label="Question groups"></div></section>`;
   renderCards();
 }
 
@@ -295,15 +295,10 @@ function renderThanks(group) {
   document.querySelector('#withdraw-group').onclick = () => withdrawGroup(group);
 }
 
-function about() {
-  app.innerHTML = `<article class="about"><a class="text-button" href="#">← Back to the groups</a><h1>A different way<br>of seeing mathematics.</h1><p>MathPalette explores visual mathematical reasoning. Your responses help us understand how people solve problems presented with different diagrams.</p><p>Choose a group and answer its questions independently. Paper and pencil are welcome. Please do not use AI, search engines, or outside help.</p><p>Write your final answers in any ordinary text format. If you are unsure, give your best answer or select “I don't know”. You can pause and return using the same browser, revisit any question, or clear an unfinished group and start again.</p><p>We collect your answers, the time spent on each question while this page is visible, and the English name you provide after completing a group. We do not ask for an email address or an account.</p><p>Your name identifies your responses and may be used in acknowledgments for a future paper. Answers are not graded on this website. After submitting, you can withdraw the group from this browser, then edit or clear your answers.</p><a href="#" class="primary-button">Choose a group <span aria-hidden="true">→</span></a></article>`;
-}
-
 function route() {
   stopTimer();
   const hash = location.hash;
-  if (hash === '#about') about();
-  else if (hash.startsWith('#group/')) {
+  if (hash.startsWith('#group/')) {
     const group = catalog.groups.find(g => g.id === hash.slice(7));
     if (group) renderQuestion(group); else { home(); notify('That group could not be found. Please select a group below.'); }
   } else home();
