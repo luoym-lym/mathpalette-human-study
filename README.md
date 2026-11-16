@@ -4,7 +4,7 @@ A buildless answering website hosted by GitHub Pages, with Supabase storing comp
 
 ## Participant flow
 
-Select one of 15 fixed groups, enter plain-text answers, and provide an English name after finishing the group. Each question's visible-page time is recorded without displaying a timer. Paper-and-pencil work is welcome; answers require no special syntax.
+The home page shows a short instruction and a compact list of the 15 fixed groups, with progress and clear-group actions. Select a group, enter plain-text answers, and provide an English name after finishing the group. Each question's visible-page time is recorded without displaying a timer. Paper-and-pencil work is welcome; answers require no special syntax.
 
 Every sample occurs once across the groups. Original and Special versions of the same question, including separate Special variants, always belong to different groups. The assignment and order are fixed in docs/groups.json.
 

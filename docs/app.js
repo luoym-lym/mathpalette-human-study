@@ -2,8 +2,7 @@
 
 const app = document.querySelector('#app');
 const dialog = document.querySelector('#image-dialog');
-let catalog, state, storageKey, active = null, page = 0, noticeTimeout;
-const pageSize = 15;
+let catalog, state, storageKey, active = null, noticeTimeout;
 const escapeHTML = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const groupNumber = group => group.id.slice(1);
 let busy = false;
@@ -115,47 +114,25 @@ window.addEventListener('pagehide', checkpoint);
 window.addEventListener('pageshow', resumeTimer);
 setInterval(() => { if (active) { checkpoint(); resumeTimer(); } }, 1000);
 
-const art = `<div class="hero-art" aria-hidden="true">
-<svg viewBox="0 0 460 285" fill="none" xmlns="http://www.w3.org/2000/svg">
-<circle cx="275" cy="132" r="82" fill="#dbe3cd" stroke="#a8b798" stroke-width="1"/>
-<ellipse cx="275" cy="132" rx="82" ry="28" stroke="#93a482" stroke-dasharray="4 5"/>
-<path d="M275 50V214M193 132H357" stroke="#a8b798" stroke-dasharray="4 5"/>
-<path d="M94 214 174 63 254 214Z" fill="#f7f5e9" fill-opacity=".7" stroke="#245d4a" stroke-width="2"/>
-<path d="M174 63V214M94 214 214 139" stroke="#7e9770" stroke-dasharray="5 5"/>
-<path d="M174 200H188V214" stroke="#245d4a"/>
-<circle cx="94" cy="214" r="4" fill="#245d4a"/><circle cx="174" cy="63" r="4" fill="#245d4a"/><circle cx="254" cy="214" r="4" fill="#245d4a"/>
-<circle cx="339" cy="80" r="8" fill="#d6a253"/><path d="M314 216q30-23 54-13" stroke="#b78b50" stroke-width="2"/>
-<g fill="#506549" font-family="Georgia,serif" font-style="italic" font-size="17"><text x="70" y="222">A</text><text x="168" y="46">B</text><text x="262" y="228">C</text><text x="185" y="162">h</text><text x="330" y="154">r</text></g>
-</svg><span class="art-label">A DIFFERENT WAY OF SEEING.</span></div>`;
 
 function home() {
-  const complete = catalog.groups.filter(g => getProgress(g).complete).length;
-  app.innerHTML = `<section class="hero"><div><div class="eyebrow">An invitation to explore</div><h1>A little curiosity.<br>A <em>new perspective.</em></h1><p class="hero-copy">How do you see a math problem? Share your answers to a set of visual questions and help us understand mathematical reasoning.</p><div class="hero-meta"><span>↗ &nbsp; Contribute to research</span><span>○ &nbsp; No account needed</span></div></div>${art}</section>
-  <section class="steps" aria-label="How to participate"><div class="step"><span class="step-number">01</span><div><strong>Choose a group</strong><p>A fixed set. Pause whenever you like.</p></div></div><div class="step"><span class="step-number">02</span><div><strong>Share your answers</strong><p>Write naturally. Any format is fine.</p></div></div><div class="step"><span class="step-number">03</span><div><strong>Leave your name</strong><p>So we know who to thank.</p></div></div></section>
-  <section id="group-list" aria-labelledby="groups-heading"><div class="section-heading"><div><h2 id="groups-heading">Find your starting point.</h2><p>Choose any group. You can always come back for another.</p></div><div class="group-summary">${catalog.groups.length} fixed groups<br>${complete ? `${complete} completed on this browser` : '97–98 questions each'}</div></div><div class="groups" id="groups"></div><div class="pagination"><span id="page-info"></span><div class="pagination-controls"><button id="previous-page" aria-label="Previous groups">← Previous</button><button id="next-page" aria-label="Next groups">Next →</button></div></div></section>`;
+  app.innerHTML = `<section class="survey-home"><h1>MathPalette questionnaire</h1><p>Choose a group and answer independently. You can pause and continue in the same browser.</p><p>Enter your English name after completing the group. <a href="#about">Instructions</a></p><div class="groups" id="groups" aria-label="Question groups"></div></section>`;
   renderCards();
-  document.querySelector(".pagination").hidden = catalog.groups.length <= pageSize;
-  document.querySelector('#previous-page').onclick = () => { page--; renderCards(); };
-  document.querySelector('#next-page').onclick = () => { page++; renderCards(); };
 }
 
 function renderCards() {
-  const offset = page * pageSize;
-  document.querySelector('#groups').innerHTML = catalog.groups.slice(offset, offset + pageSize).map((group, i) => {
+  document.querySelector('#groups').innerHTML = catalog.groups.map(group => {
     const progress = getProgress(group);
     const count = answeredCount(progress);
     const started = count > 0 || progress.answers.some(item => item.time_seconds > 0);
     const tag = progress.withdrawing ? 'Withdrawing' : progress.complete ? 'Completed' : progress.pending ? 'Pending' : started ? 'In progress' : 'Open';
-    return `<article class="group-card ${i === 0 && !progress.complete ? 'featured' : ''}"><a class="group-card-link" href="#group/${group.id}"><div class="card-top"><span class="group-number">${groupNumber(group)}</span><span class="tag">${tag}</span></div><h3>Group ${groupNumber(group)}</h3><p>${group.samples.length} questions · Mixed topics</p><div class="card-bottom"><span>${progress.complete ? 'View completion' : started ? `Continue · ${count}/${group.samples.length}` : 'Start this group'}</span><span aria-hidden="true">${progress.complete ? '✓' : '↗'}</span></div></a>${started && !isLocked(progress) ? `<button class="clear-group-button danger-text" type="button" data-clear-group="${group.id}" aria-label="Clear group ${groupNumber(group)}">Clear group</button>` : ''}</article>`;
+    const action = progress.complete ? 'View' : progress.pending || progress.withdrawing || started ? 'Continue' : 'Start';
+    return `<article class="group-card"><a class="group-card-link" href="#group/${group.id}"><strong class="group-name">Group ${groupNumber(group)}</strong><span class="group-count">${group.samples.length} questions</span><span class="tag">${tag}${started && !isLocked(progress) ? ` · ${count}/${group.samples.length}` : ''}</span><span class="group-open">${action}</span></a>${started && !isLocked(progress) ? `<button class="clear-group-button danger-text" type="button" data-clear-group="${group.id}" aria-label="Clear group ${groupNumber(group)}">Clear group</button>` : ''}</article>`;
   }).join('');
   document.querySelectorAll('[data-clear-group]').forEach(button => {
     button.onclick = () => resetGroup(catalog.groups.find(group => group.id === button.dataset.clearGroup));
   });
-  document.querySelector('#page-info').textContent = `Showing ${offset + 1}–${Math.min(offset + pageSize, catalog.groups.length)} of ${catalog.groups.length} groups`;
-  document.querySelector('#previous-page').disabled = page === 0;
-  document.querySelector('#next-page').disabled = offset + pageSize >= catalog.groups.length;
 }
-
 
 function renderQuestion(group) {
   const progress = getProgress(group);

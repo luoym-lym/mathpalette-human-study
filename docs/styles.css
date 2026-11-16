@@ -22,3 +22,27 @@
 .group-card-link{display:block}
 .clear-group-button{display:block;width:100%;margin-top:15px;padding:9px 12px;border:1px solid #d8cbc2;border-radius:6px;background:transparent;font-size:11px}
 .clear-group-button:hover{background:#f2e8e1}
+
+/* The home page is a compact questionnaire list. Answer pages keep their layout. */
+.survey-home{padding:28px 0;color:#222}
+.survey-home h1{font:600 24px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:0;margin:0 0 12px}
+.survey-home>p{font-size:14px;line-height:1.6;margin:6px 0;color:#555}
+.survey-home>p a{color:#175849;text-decoration:underline}
+.survey-home .groups{display:block;margin-top:24px}
+.survey-home .group-card{display:grid;grid-template-columns:minmax(0,1fr)100px;align-items:center;gap:16px;padding:12px 0;border:0;border-bottom:1px solid #d5d5d5;border-radius:0;background:none;transition:none}
+.survey-home .group-card:hover{transform:none;box-shadow:none;border-color:#d5d5d5}
+.survey-home .group-card-link{display:grid;grid-template-columns:100px 120px minmax(0,1fr)70px;align-items:center;gap:12px;font-size:14px}
+.survey-home .group-name{font-weight:600}
+.survey-home .group-count{color:#555}
+.survey-home .tag{padding:0;border:0;border-radius:0;font-size:13px;text-transform:none;letter-spacing:0;color:#555}
+.survey-home .group-open{text-align:right;text-decoration:underline;color:#175849}
+.survey-home .clear-group-button{margin:0;padding:7px 9px;border-radius:3px;font-size:12px}
+@media(max-width:650px){
+  .survey-home{padding-top:20px}
+  .survey-home .group-card{gap:12px;grid-template-columns:minmax(0,1fr)92px}
+  .survey-home .group-card-link{grid-template-columns:minmax(0,1fr)minmax(0,1fr);gap:5px 8px;font-size:13px}
+  .survey-home .group-name{grid-column:1;grid-row:1}
+  .survey-home .group-count{grid-column:1;grid-row:2;font-size:12px}
+  .survey-home .tag{grid-column:2;grid-row:2;text-align:right;font-size:12px}
+  .survey-home .group-open{grid-column:2;grid-row:1}
+}
