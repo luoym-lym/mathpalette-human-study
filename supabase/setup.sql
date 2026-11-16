@@ -1,4 +1,4 @@
--- Run this complete file once in the Supabase SQL Editor.
+-- Run this complete file, then enable-withdrawal.sql, in the Supabase SQL Editor.
 -- Safe to rerun for this same fixed assignment; existing responses are preserved.
 begin;
 
@@ -126,7 +126,7 @@ $function$;
 
 revoke all on function public.submit_human_group(jsonb) from public, anon, authenticated;
 grant usage on schema public to anon, authenticated;
-grant execute on function public.submit_human_group(jsonb) to anon, authenticated;
+-- Public writes are granted only by enable-withdrawal.sql.
 
 -- Fixed assignments are appended below. They contain IDs only, never answer keys.
 insert into public.human_study_groups(version, group_id, sample_ids) values ('eba129abe0b251f0', 'G01', '["Plane586_C05", "Plane583_original", "Plane112_original", "Solid297_original", "Plane220_C05", "Plane99_C03", "Plane111_C08", "Plane388_original", "Plane505_C07", "Solid114_original", "Plane96_C04", "Ana200_C01", "Plane503_C02", "Plane541_original", "Ana03_original", "Plane582_C04", "Ana18_C05", "Plane474_original", "Plane356_C02", "Plane370_C01", "Plane535_C06", "Plane571_C02", "Plane95_C02", "Plane113_C05", "Plane132_C01", "Plane585_C02", "Plane497_C02", "Solid110_C01", "Plane159_original", "Ana575_original", "Plane456_C03", "Plane98_C07", "Plane555_C04", "Plane264_C01", "Solid147_C02", "Plane25_original", "Plane133_C05", "Solid276_C02", "Plane217_C01", "Ana14_original", "Plane560_original", "Plane557_C05", "Solid94_C04", "Ana13_C02", "Plane561_C03", "Plane308_original", "Ana59_original", "Ana25_C02", "Plane580_C01", "Plane243_C04", "Solid239_C02", "Solid277_C03", "Ana11_original", "Plane565_C01", "Solid272_C01", "Plane136_C06", "Ana570_C02", "Ana477_original", "Plane578_C05", "Ana143_C03", "Solid111_original", "Ana97_original", "Ana12_C01", "Solid142_original", "Solid271_C01", "Plane131_C01", "Solid190_C02", "Plane123_C04", "Plane539_C05", "Plane293_original", "Solid275_C06", "Plane538_C01", "Ana90_C02", "Plane324_C01", "Ana06_C01", "Plane553_C02", "Solid251_C01", "Plane236_C03", "Plane577_original", "Plane562_C01", "Solid74_C03", "Ana231_original", "Plane547_original", "Plane536_C06", "Plane208_C01", "Plane575_C02", "Plane593_original", "Plane325_C03", "Plane495_original", "Plane537_C01", "Ana60_original", "Plane337_original", "Plane124_C02", "Plane595_C01", "Ana10_C02", "Plane551_C05", "Ana22_C01", "Solid279_original"]'::jsonb) on conflict (version, group_id) do nothing;
