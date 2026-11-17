@@ -210,6 +210,7 @@ ${isZh ? `<ol class="study-notes" aria-label="作答注意事项">
 <li>我们保证<strong>仅将收集的数据用于学术用途</strong>。</li>
 <li>由于我们不要求您填写联系方式，我们也不会向您返回您的作答结果（这也并不重要）。您的作答结果主要用于数据统计。</li>
 <li>填写的英文名仅用于区分作答者以及可能的致谢，<strong>不要求填写真名</strong>。</li>
+<li>我们非常抱歉暂时难以提供题目的中文版本。如果遇到难以理解的词汇希望您能自行查询。</li>
 </ol>
 <p>请选择一组题目独立作答。在同一浏览器中可以随时暂停并继续。</p>` : `<ol class="study-notes" aria-label="Participation notes">
 <li><strong>Any readable answer format is accepted</strong>, such as <code>sqrt(x)</code>, <code>√x</code>, or <code>4pi</code>. Fractions and irrational numbers may be left in exact form or rounded to any number of decimal places. Answers will be evaluated manually.</li>
