@@ -8,9 +8,9 @@ The home page shows a short instruction and a compact list of the 15 fixed group
 
 Every sample occurs once across the groups. Original and Special versions of the same question, including separate Special variants, always belong to different groups. The assignment and order are fixed in docs/groups.json.
 
-Progress and drafts are saved in the same browser. A complete group is submitted to Supabase after the name form. Leaving the question or hiding the tab pauses timing. Previous question and All questions let participants revisit, edit, or clear individual answers. Revisiting a question accumulates time on that question. Clear group deletes only that group's local answers and recorded time, after confirmation. It is available directly on In progress home cards as well as inside a group. Clearing returns to the home page with Open status; timing starts again only when the participant explicitly opens the group.
+Progress and drafts are saved in the same browser. Opening a group locks that group in Supabase (`in_progress`) so other participants cannot start or submit it at the same time. A complete group is submitted to Supabase after the name form, transitioning the lock to `completed`. Leaving the question or hiding the tab pauses timing. Previous question and All questions let participants revisit, edit, or clear individual answers. Revisiting a question accumulates time on that question. Clear group deletes only that group's local answers and recorded time, after confirmation, and releases the server lock so the group returns to Open status for everyone.
 
-Completed groups can be withdrawn using the submitting browser. The server removes that group's responses and the browser keeps an editable draft. The participant may then resubmit or clear the group. An uncertain submission stays locked until retry or cancellation confirms its state. Clearing browser storage loses local progress and the ability to withdraw without the organizer.
+Completed groups can be withdrawn using the submitting browser. The server removes that group's responses, keeps the group locked as `in_progress` for that browser's draft, and lets the participant either resubmit or click Clear group to release the lock completely. Clearing browser storage loses local progress and the ability to unlock or withdraw without the organizer.
 
 ## Hosting
 
@@ -20,13 +20,14 @@ The browser configuration in docs/config.js contains a Supabase project URL and 
 
 ## Supabase setup
 
-For a new project, run supabase/setup.sql and then supabase/enable-withdrawal.sql in the project's SQL Editor. For the existing deployed project, run only supabase/enable-withdrawal.sql. It creates:
+For a new project, run supabase/setup.sql, supabase/enable-withdrawal.sql, and supabase/enable-group-locks.sql in the project's SQL Editor. For the existing deployed project, run supabase/enable-group-locks.sql. It creates:
 
 - human_study_groups: the frozen list of sample IDs for each group and dataset version.
 - human_responses: one row per question, with english_name, group_id, sample_id, answer, time_seconds, and version.
 - submit_human_group(payload): the private complete-group validator.
 - human_submission_receipts: private hashes of random per-submission browser receipts.
-- submit_human_group_v2(payload) and withdraw_human_group(payload): atomic submission and withdrawal endpoints.
+- human_group_locks: single-participant locks per group (`in_progress` or `completed`).
+- list_human_group_locks(payload), claim_human_group(payload), release_human_group(payload), submit_human_group_v2(payload), and withdraw_human_group(payload): atomic group-locking, submission, and withdrawal endpoints.
 
 All three tables enable RLS and deny direct access to public clients. Only the two receipt-protected endpoints are granted to anon/authenticated clients. It validates the complete group, exact sample order, answer lengths, and nonnegative finite question times. Submission accepts identical retries and rejects attempts to overwrite existing answers. Withdrawal deletes only the matching receipt's group. Revoked receipt hashes are retained to stop delayed requests from restoring withdrawn answers. A new submission uses a new random receipt. Existing pre-upgrade submissions can acquire a receipt only by providing the identical complete answers and times already saved in the submitting browser. It exposes no response-reading endpoint.
 

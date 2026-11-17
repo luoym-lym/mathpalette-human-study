@@ -5,7 +5,11 @@ const dialog = document.querySelector('#image-dialog');
 let catalog, state, storageKey, active = null, noticeTimeout;
 const escapeHTML = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const groupNumber = group => group.id.slice(1);
-let busy = false;
+let busy = false, groupLocks = {};
+function newToken() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+}
 function getProgress(group) {
   let progress = state.groups[group.id];
   if (!progress) progress = state.groups[group.id] = {answers:[], complete:false};
@@ -24,16 +28,22 @@ function getProgress(group) {
   }
   return progress;
 }
+function getLockToken(progress) {
+  if (!progress.lockToken) {
+    progress.lockToken = (progress.receipt && progress.receipt.token) || newToken();
+  }
+  return progress.lockToken;
+}
 const answeredCount = progress => progress.answers.filter(item => item.answer.trim()).length;
 const isLocked = progress => progress.complete || progress.pending || progress.withdrawing;
 function newReceipt(name) {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  return {name, token:Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')};
+  return {name, token:newToken()};
 }
 function submissionPayload(group) {
   const progress = getProgress(group);
   return {version:catalog.version, group_id:group.id, english_name:progress.receipt.name,
-    receipt_token:progress.receipt.token, answers:progress.answers.map(item => ({
+    receipt_token:progress.receipt.token, lock_token:getLockToken(progress),
+    answers:progress.answers.map(item => ({
       sample_id:item.sample_id, answer:item.answer,
       time_seconds:Math.round(item.time_seconds * 1000) / 1000
     }))};
@@ -61,7 +71,47 @@ async function rpc(endpoint, payload) {
     throw error;
   } finally { clearTimeout(timeout); }
 }
-function resetGroup(group) {
+async function syncGroupLocks() {
+  if (!catalog) return false;
+  const tokens = {};
+  for (const group of catalog.groups) {
+    const progress = state.groups[group.id];
+    const token = progress && (progress.lockToken || (progress.receipt && progress.receipt.token));
+    if (token) tokens[group.id] = token;
+  }
+  const result = await rpc('list_human_group_locks', {version:catalog.version, tokens});
+  if (!result || typeof result.groups !== 'object' || result.groups === null) return false;
+  groupLocks = result.groups;
+  for (const group of catalog.groups) {
+    const progress = state.groups[group.id];
+    const remote = groupLocks[group.id];
+    if (!progress) continue;
+    if (remote && remote.mine) {
+      progress.claimed = true;
+      continue;
+    }
+    if (remote && !remote.mine) {
+      progress.claimed = false;
+      continue;
+    }
+    const count = answeredCount(progress);
+    const hasLocalWork = Boolean(progress.claimed || count > 0 || (progress.answers || []).some(item => item.time_seconds > 0));
+    if (hasLocalWork && !isLocked(progress)) {
+      try {
+        const token = getLockToken(progress);
+        save();
+        const claimed = await rpc('claim_human_group', {version:catalog.version, group_id:group.id, lock_token:token});
+        if (claimed && claimed.claimed) {
+          progress.claimed = true;
+          groupLocks[group.id] = {status:claimed.status || 'in_progress', mine:true};
+        }
+      } catch { /* Another participant may have claimed it concurrently. */ }
+    }
+  }
+  save();
+  return true;
+}
+async function resetGroup(group) {
   const progress = getProgress(group);
   if (busy || isLocked(progress)) return;
   const wasActive = Boolean(active);
@@ -70,15 +120,32 @@ function resetGroup(group) {
     if (wasActive) renderQuestion(group);
     return;
   }
-  delete state.groups[group.id];
-  if (!save()) {
-    state.groups[group.id] = progress;
-    if (wasActive) renderQuestion(group);
-    return;
-  }
-  location.hash = '#';
-  home();
-  notify('Group ' + groupNumber(group) + ' cleared. It is open again.');
+  busy = true;
+  try {
+    const token = progress.lockToken || (progress.receipt && progress.receipt.token);
+    if (token && (progress.claimed || (groupLocks[group.id] && groupLocks[group.id].mine))) {
+      const result = await rpc('release_human_group', {
+        version:catalog.version, group_id:group.id, lock_token:token
+      });
+      if (!result || result.released !== true) {
+        throw new Error('The server did not confirm unlocking this group. Please retry.');
+      }
+    }
+    delete groupLocks[group.id];
+    delete state.groups[group.id];
+    if (!save()) {
+      state.groups[group.id] = progress;
+      if (wasActive) renderQuestion(group);
+      return;
+    }
+    location.hash = '#';
+    home(true);
+    notify('Group ' + groupNumber(group) + ' cleared. It is open again.');
+  } catch (error) {
+    if (wasActive && location.hash === `#group/${group.id}`) renderQuestion(group);
+    else if (!location.hash || location.hash === '#') renderCards();
+    notify(error.message || 'Could not clear this group. Please retry.');
+  } finally { busy = false; }
 }
 
 
@@ -109,13 +176,21 @@ function resumeTimer() {
 }
 
 function stopTimer() { checkpoint(); active = null; }
-document.addEventListener('visibilitychange', () => { checkpoint(); resumeTimer(); });
+document.addEventListener('visibilitychange', () => {
+  checkpoint();
+  resumeTimer();
+  if (!document.hidden && catalog && (!location.hash || location.hash === '#')) {
+    syncGroupLocks().then(() => {
+      if (!location.hash || location.hash === '#') renderCards();
+    }).catch(() => {});
+  }
+});
 window.addEventListener('pagehide', checkpoint);
 window.addEventListener('pageshow', resumeTimer);
 setInterval(() => { if (active) { checkpoint(); resumeTimer(); } }, 1000);
 
 
-function home() {
+function home(skipSync = false) {
   app.innerHTML = `<section class="survey-home">
 <ol class="study-notes" aria-label="Participation notes">
 <li><strong>Any readable answer format is accepted</strong>, such as <code>sqrt(x)</code>, <code>√x</code>, or <code>4pi</code>. Fractions and irrational numbers may be left in exact form or rounded to any number of decimal places. Answers will be evaluated manually.</li>
@@ -128,13 +203,26 @@ function home() {
 </ol>
 <p>Choose a group and answer independently. You can pause and continue in the same browser.</p><div class="groups" id="groups" aria-label="Question groups"></div></section>`;
   renderCards();
+  if (!skipSync) {
+    syncGroupLocks().then(() => {
+      if (!location.hash || location.hash === '#') renderCards();
+    }).catch(() => {});
+  }
 }
 
 function renderCards() {
-  document.querySelector('#groups').innerHTML = catalog.groups.map(group => {
+  const container = document.querySelector('#groups');
+  if (!container) return;
+  container.innerHTML = catalog.groups.map(group => {
     const progress = getProgress(group);
+    const remote = groupLocks[group.id];
+    const lockedByOther = Boolean(remote && !remote.mine);
+    if (lockedByOther) {
+      const remoteTag = remote.status === 'completed' ? 'Completed · Locked' : 'In progress · Locked';
+      return `<article class="group-card"><div class="group-card-link is-locked" aria-disabled="true"><strong class="group-name">Group ${groupNumber(group)}</strong><span class="group-count">${group.samples.length} questions</span><span class="tag">${remoteTag}</span><span class="group-open">Locked</span></div></article>`;
+    }
     const count = answeredCount(progress);
-    const started = count > 0 || progress.answers.some(item => item.time_seconds > 0);
+    const started = Boolean(progress.claimed || count > 0 || progress.answers.some(item => item.time_seconds > 0));
     const tag = progress.withdrawing ? 'Withdrawing' : progress.complete ? 'Completed' : progress.pending ? 'Pending' : started ? 'In progress' : 'Open';
     const action = progress.complete ? 'View' : progress.pending || progress.withdrawing || started ? 'Continue' : 'Start';
     return `<article class="group-card"><a class="group-card-link" href="#group/${group.id}"><strong class="group-name">Group ${groupNumber(group)}</strong><span class="group-count">${group.samples.length} questions</span><span class="tag">${tag}${started && !isLocked(progress) ? ` · ${count}/${group.samples.length}` : ''}</span><span class="group-open">${action}</span></a>${started && !isLocked(progress) ? `<button class="clear-group-button danger-text" type="button" data-clear-group="${group.id}" aria-label="Clear group ${groupNumber(group)}">Clear group</button>` : ''}</article>`;
@@ -142,6 +230,41 @@ function renderCards() {
   document.querySelectorAll('[data-clear-group]').forEach(button => {
     button.onclick = () => resetGroup(catalog.groups.find(group => group.id === button.dataset.clearGroup));
   });
+}
+
+async function enterGroup(group) {
+  const progress = getProgress(group);
+  const remote = groupLocks[group.id];
+  if (remote && !remote.mine) {
+    location.hash = '#';
+    home(true);
+    notify('Group ' + groupNumber(group) + ' is locked by another participant. Please choose another group.');
+    return;
+  }
+  if (isLocked(progress) || (progress.claimed && remote && remote.mine)) {
+    renderQuestion(group);
+    return;
+  }
+  app.innerHTML = `<div class="loading">Locking Group ${groupNumber(group)}…</div>`;
+  try {
+    const token = getLockToken(progress);
+    if (!save()) return;
+    const result = await rpc('claim_human_group', {
+      version:catalog.version, group_id:group.id, lock_token:token
+    });
+    if (!result || result.claimed !== true) {
+      throw new Error('Could not lock this group. Please retry.');
+    }
+    progress.claimed = true;
+    groupLocks[group.id] = {status:result.status || 'in_progress', mine:true};
+    save();
+    if (location.hash === `#group/${group.id}`) renderQuestion(group);
+  } catch (error) {
+    await syncGroupLocks().catch(() => {});
+    location.hash = '#';
+    home(true);
+    notify(error.message || 'This group could not be opened.');
+  }
 }
 
 function renderQuestion(group) {
@@ -230,6 +353,7 @@ function renderName(group) {
     const name = document.querySelector('#english-name').value.trim();
     if (!name || busy) return;
     state.name = name;
+    getLockToken(progress);
     progress.receipt = newReceipt(name);
     progress.pending = true;
     if (!save()) { progress.pending = false; progress.receipt = null; return; }
@@ -254,7 +378,9 @@ async function submitGroup(group) {
     if (result.saved !== true) throw new Error('The server did not confirm receipt. Please retry.');
     progress.complete = true;
     progress.pending = false;
+    progress.claimed = true;
     progress.name = progress.receipt.name;
+    groupLocks[group.id] = {status:'completed', mine:true};
     save();
   } catch (failure) { error = failure.message; }
   finally { busy = false; }
@@ -269,6 +395,7 @@ async function withdrawGroup(group) {
   if (!progress.receipt) {
     progress.receipt = {...newReceipt(progress.name || state.name), legacy:true};
   }
+  getLockToken(progress);
   progress.withdrawing = true;
   if (!save()) return;
   busy = true;
@@ -289,8 +416,10 @@ async function withdrawGroup(group) {
     progress.complete = false;
     progress.pending = false;
     progress.withdrawing = false;
+    progress.claimed = true;
     progress.receipt = null;
     progress.view = 'review';
+    groupLocks[group.id] = {status:'in_progress', mine:true};
     save();
   } catch (failure) { error = failure.message; }
   finally { busy = false; }
@@ -310,7 +439,7 @@ function route() {
   const hash = location.hash;
   if (hash.startsWith('#group/')) {
     const group = catalog.groups.find(g => g.id === hash.slice(7));
-    if (group) renderQuestion(group); else { home(); notify('That group could not be found. Please select a group below.'); }
+    if (group) enterGroup(group); else { home(); notify('That group could not be found. Please select a group below.'); }
   } else home();
   window.scrollTo(0,0);
 }
@@ -328,6 +457,7 @@ window.addEventListener('hashchange', () => { if (catalog) route(); });
     try { state = JSON.parse(localStorage.getItem(storageKey)) || {name:'',groups:{}}; }
     catch { throw new Error('Browser storage is unavailable. Enable it and reload to save your progress.'); }
     if (!save()) throw new Error('Browser storage is unavailable. Enable it and reload to save your progress.');
+    await syncGroupLocks().catch(() => {});
     route();
   } catch (error) { app.innerHTML = `<div class="loading"><h2>Let's try that again.</h2><p>${escapeHTML(error.message)}</p><button class="secondary-button" id="reload">Reload page</button></div>`; document.querySelector('#reload').onclick = () => location.reload(); }
 })();

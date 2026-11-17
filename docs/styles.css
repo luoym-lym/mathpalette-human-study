@@ -35,6 +35,9 @@
 .survey-home .group-count{color:#555}
 .survey-home .tag{padding:0;border:0;border-radius:0;font-size:13px;text-transform:none;letter-spacing:0;color:#555}
 .survey-home .group-open{text-align:right;text-decoration:underline;color:#175849}
+.survey-home .group-card-link.is-locked{color:#888;cursor:not-allowed}
+.survey-home .group-card-link.is-locked .group-count,.survey-home .group-card-link.is-locked .tag{color:#888}
+.survey-home .group-card-link.is-locked .group-open{color:#888;text-decoration:none}
 .survey-home .clear-group-button{margin:0;padding:7px 9px;border-radius:3px;font-size:12px}
 @media(max-width:650px){
   .survey-home{padding-top:20px}
