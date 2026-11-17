@@ -193,9 +193,25 @@ setInterval(() => { if (active) { checkpoint(); resumeTimer(); } }, 1000);
 
 
 function home(skipSync = false) {
+  const isZh = state.lang === 'zh';
   app.innerHTML = `<section class="survey-home">
-<h2 class="study-notes-title">Instruction</h2>
-<ol class="study-notes" aria-label="Participation notes">
+<div class="survey-home-top">
+  <h2 class="study-notes-title">${isZh ? '注意事项' : 'Instruction'}</h2>
+  <div class="lang-switch" role="group" aria-label="Language switch">
+    <button type="button" class="lang-button ${!isZh ? 'active' : ''}" data-lang="en">English</button>
+    <button type="button" class="lang-button ${isZh ? 'active' : ''}" data-lang="zh">中文</button>
+  </div>
+</div>
+${isZh ? `<ol class="study-notes" aria-label="作答注意事项">
+<li><strong>回答不限格式，可阅读即可</strong>（如 <code>sqrt(x)</code>、<code>√x</code>、<code>4pi</code> 都是允许的）。对于分数、无理数等，可以随意选择保留任意小数位数或者保留原答案。我们将会人工判断答案是否正确。</li>
+<li>如果认为题目过于困难，可以选择 <strong>“I don’t know”</strong> 跳过（但是请尽量作答）。</li>
+<li>可以使用包括计算器在内的工具，但是<strong>不可以使用 AI</strong>。</li>
+<li>我们将收集您的回答与作答时间。</li>
+<li>我们保证<strong>仅将收集的数据用于学术用途</strong>。</li>
+<li>由于我们不要求您填写联系方式，我们也不会向您返回您的作答结果（这也并不重要）。您的作答结果主要用于数据统计。</li>
+<li>填写的英文名仅用于区分作答者以及可能的致谢，<strong>不要求填写真名</strong>。</li>
+</ol>
+<p>请选择一组题目独立作答。在同一浏览器中可以随时暂停并继续。</p>` : `<ol class="study-notes" aria-label="Participation notes">
 <li><strong>Any readable answer format is accepted</strong>, such as <code>sqrt(x)</code>, <code>√x</code>, or <code>4pi</code>. Fractions and irrational numbers may be left in exact form or rounded to any number of decimal places. Answers will be evaluated manually.</li>
 <li>If a question is too difficult, select <strong>“I don’t know”</strong> to skip it (but please try your best to answer).</li>
 <li>You may use tools, including calculators, but <strong>AI assistance is not allowed</strong>.</li>
@@ -204,7 +220,15 @@ function home(skipSync = false) {
 <li>We do not ask for your contact information, so we will not send you your results. Individual results are not the focus of this study; your responses will mainly be used for statistical analysis.</li>
 <li>The English name you enter will be used only to distinguish participants and potentially acknowledge your contribution. <strong>You do not need to use your real name.</strong></li>
 </ol>
-<p>Choose a group and answer independently. You can pause and continue in the same browser.</p><div class="groups" id="groups" aria-label="Question groups"></div></section>`;
+<p>Choose a group and answer independently. You can pause and continue in the same browser.</p>`}<div class="groups" id="groups" aria-label="Question groups"></div></section>`;
+  document.querySelectorAll('[data-lang]').forEach(button => {
+    button.onclick = () => {
+      if (state.lang === button.dataset.lang) return;
+      state.lang = button.dataset.lang;
+      save();
+      home(true);
+    };
+  });
   renderCards();
   if (!skipSync) {
     syncGroupLocks().then(() => {
@@ -216,19 +240,36 @@ function home(skipSync = false) {
 function renderCards() {
   const container = document.querySelector('#groups');
   if (!container) return;
+  const isZh = state.lang === 'zh';
   container.innerHTML = catalog.groups.map(group => {
     const progress = getProgress(group);
     const remote = groupLocks[group.id];
     const lockedByOther = Boolean(remote && !remote.mine);
+    const groupTitle = isZh ? `第 ${groupNumber(group)} 组` : `Group ${groupNumber(group)}`;
+    const countLabel = isZh ? `${group.samples.length} 题` : `${group.samples.length} questions`;
     if (lockedByOther) {
-      const remoteTag = remote.status === 'completed' ? 'Completed · Locked' : 'In progress · Locked';
-      return `<article class="group-card"><div class="group-card-link is-locked" aria-disabled="true"><strong class="group-name">Group ${groupNumber(group)}</strong><span class="group-count">${group.samples.length} questions</span><span class="tag">${remoteTag}</span><span class="group-open">Locked</span></div></article>`;
+      const remoteTag = remote.status === 'completed'
+        ? (isZh ? '已完成 · 已锁定' : 'Completed · Locked')
+        : (isZh ? '进行中 · 已锁定' : 'In progress · Locked');
+      return `<article class="group-card"><div class="group-card-link is-locked" aria-disabled="true"><strong class="group-name">${groupTitle}</strong><span class="group-count">${countLabel}</span><span class="tag">${remoteTag}</span><span class="group-open">${isZh ? '已锁定' : 'Locked'}</span></div></article>`;
     }
     const count = answeredCount(progress);
     const started = Boolean(progress.claimed || count > 0 || progress.answers.some(item => item.time_seconds > 0));
-    const tag = progress.withdrawing ? 'Withdrawing' : progress.complete ? 'Completed' : progress.pending ? 'Pending' : started ? 'In progress' : 'Open';
-    const action = progress.complete ? 'View' : progress.pending || progress.withdrawing || started ? 'Continue' : 'Start';
-    return `<article class="group-card"><a class="group-card-link" href="#group/${group.id}"><strong class="group-name">Group ${groupNumber(group)}</strong><span class="group-count">${group.samples.length} questions</span><span class="tag">${tag}${started && !isLocked(progress) ? ` · ${count}/${group.samples.length}` : ''}</span><span class="group-open">${action}</span></a>${started && !isLocked(progress) ? `<button class="clear-group-button danger-text" type="button" data-clear-group="${group.id}" aria-label="Clear group ${groupNumber(group)}">Clear group</button>` : ''}</article>`;
+    const tag = progress.withdrawing
+      ? (isZh ? '撤回中' : 'Withdrawing')
+      : progress.complete
+        ? (isZh ? '已完成' : 'Completed')
+        : progress.pending
+          ? (isZh ? '提交中' : 'Pending')
+          : started
+            ? (isZh ? '进行中' : 'In progress')
+            : (isZh ? '可作答' : 'Open');
+    const action = progress.complete
+      ? (isZh ? '查看' : 'View')
+      : progress.pending || progress.withdrawing || started
+        ? (isZh ? '继续' : 'Continue')
+        : (isZh ? '开始' : 'Start');
+    return `<article class="group-card"><a class="group-card-link" href="#group/${group.id}"><strong class="group-name">${groupTitle}</strong><span class="group-count">${countLabel}</span><span class="tag">${tag}${started && !isLocked(progress) ? ` · ${count}/${group.samples.length}` : ''}</span><span class="group-open">${action}</span></a>${started && !isLocked(progress) ? `<button class="clear-group-button danger-text" type="button" data-clear-group="${group.id}" aria-label="Clear group ${groupNumber(group)}">${isZh ? '清空本组' : 'Clear group'}</button>` : ''}</article>`;
   }).join('');
   document.querySelectorAll('[data-clear-group]').forEach(button => {
     button.onclick = () => resetGroup(catalog.groups.find(group => group.id === button.dataset.clearGroup));
