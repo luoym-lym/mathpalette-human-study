@@ -192,6 +192,7 @@ setInterval(() => { if (active) { checkpoint(); resumeTimer(); } }, 1000);
 
 function home(skipSync = false) {
   app.innerHTML = `<section class="survey-home">
+<h2 class="study-notes-title">Instruction</h2>
 <ol class="study-notes" aria-label="Participation notes">
 <li><strong>Any readable answer format is accepted</strong>, such as <code>sqrt(x)</code>, <code>√x</code>, or <code>4pi</code>. Fractions and irrational numbers may be left in exact form or rounded to any number of decimal places. Answers will be evaluated manually.</li>
 <li>If a question is too difficult, select <strong>“I don’t know”</strong> to skip it (but please try your best to answer).</li>
