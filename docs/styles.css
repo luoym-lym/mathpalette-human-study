@@ -45,3 +45,7 @@
   .survey-home .tag{grid-column:2;grid-row:2;text-align:right;font-size:12px}
   .survey-home .group-open{grid-column:2;grid-row:1}
 }
+
+.survey-home .study-notes{margin:16px 0 20px;padding-left:24px;font-size:14px;line-height:1.65;color:#333}
+.survey-home .study-notes li{margin:7px 0;padding-left:2px}
+.survey-home .study-notes code{font-size:1em}

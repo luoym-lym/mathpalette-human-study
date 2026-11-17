@@ -116,7 +116,16 @@ setInterval(() => { if (active) { checkpoint(); resumeTimer(); } }, 1000);
 
 
 function home() {
-  app.innerHTML = `<section class="survey-home"><h1>MathPalette questionnaire</h1><p>Choose a group and answer independently. You can pause and continue in the same browser.</p><p>Enter your English name after completing the group.</p><div class="groups" id="groups" aria-label="Question groups"></div></section>`;
+  app.innerHTML = `<section class="survey-home"><h1>MathPalette questionnaire</h1>
+<ol class="study-notes" aria-label="Participation notes">
+<li><strong>Any readable answer format is accepted</strong>, such as <code>sqrt(x)</code>, <code>√x</code>, or <code>4pi</code>. Fractions and irrational numbers may be left in exact form or rounded to any number of decimal places. Answers will be evaluated manually.</li>
+<li>If a question is too difficult, select <strong>“I don’t know”</strong> to skip it.</li>
+<li>You may use tools, including calculators, but <strong>AI assistance is not allowed</strong>.</li>
+<li>We will collect your answers and the time spent on each question.</li>
+<li>All collected data will be used <strong>solely for academic research</strong>.</li>
+<li>The English name you enter will be used only to distinguish participants and potentially acknowledge your contribution. <strong>You do not need to use your real name.</strong></li>
+</ol>
+<p>Choose a group and answer independently. You can pause and continue in the same browser.</p><div class="groups" id="groups" aria-label="Question groups"></div></section>`;
   renderCards();
 }
 
