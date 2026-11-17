@@ -210,6 +210,7 @@ ${isZh ? `<ol class="study-notes" aria-label="作答注意事项">
 <li>我们保证<strong>仅将收集的数据用于学术用途</strong>。</li>
 <li>由于我们不要求您填写联系方式，我们也不会向您返回您的作答结果（这也并不重要）。您的作答结果主要用于数据统计。</li>
 <li>填写的英文名仅用于区分作答者以及可能的致谢，<strong>不要求填写真名</strong>。</li>
+<li>点击开始后<strong>该组题目即会被锁定</strong>，其他人无法再作答。如果决定不作答，请及时退出并点击 <strong>“清空本组”（Clear group）</strong> 以解除锁定。</li>
 <li>我们非常抱歉暂时难以提供题目的中文版本。如果遇到难以理解的词汇希望您能自行查询。</li>
 </ol>
 <p>请选择一组题目独立作答。在同一浏览器中可以随时暂停并继续。</p>` : `<ol class="study-notes" aria-label="Participation notes">
@@ -220,6 +221,7 @@ ${isZh ? `<ol class="study-notes" aria-label="作答注意事项">
 <li>All collected data will be used <strong>solely for academic research</strong>.</li>
 <li>We do not ask for your contact information, so we will not send you your results. Individual results are not the focus of this study; your responses will mainly be used for statistical analysis.</li>
 <li>The English name you enter will be used only to distinguish participants and potentially acknowledge your contribution. <strong>You do not need to use your real name.</strong></li>
+<li>Once you start a group, <strong>it will be locked</strong> so others cannot work on it. If you decide not to complete it, please exit promptly and click <strong>“Clear group”</strong> to release the lock.</li>
 </ol>
 <p>Choose a group and answer independently. You can pause and continue in the same browser.</p>`}<div class="groups" id="groups" aria-label="Question groups"></div></section>`;
   document.querySelectorAll('[data-lang]').forEach(button => {
