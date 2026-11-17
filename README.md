@@ -23,7 +23,7 @@ The browser configuration in docs/config.js contains a Supabase project URL and 
 For a new project, run supabase/setup.sql, supabase/enable-withdrawal.sql, and supabase/enable-group-locks.sql in the project's SQL Editor. For the existing deployed project, run supabase/enable-group-locks.sql. It creates:
 
 - human_study_groups: the frozen list of sample IDs for each group and dataset version.
-- human_responses: one row per question, with english_name, group_id, sample_id, answer, time_seconds, and version.
+- human_responses: one row per question, with english_name, university_year, major, group_id, sample_id, answer, time_seconds, and version.
 - submit_human_group(payload): the private complete-group validator.
 - human_submission_receipts: private hashes of random per-submission browser receipts.
 - human_group_locks: single-participant locks per group (`in_progress` or `completed`).
@@ -37,7 +37,7 @@ Names identify respondents; they do not authenticate them. This is a public volu
 
 In Supabase Table Editor, select human_responses and export the data. Alternatively, run this in SQL Editor and export the result:
 
-    select english_name, group_id, sample_id, answer, time_seconds
+    select english_name, university_year, major, group_id, sample_id, answer, time_seconds
     from public.human_responses
     order by english_name, group_id, sample_id;
 

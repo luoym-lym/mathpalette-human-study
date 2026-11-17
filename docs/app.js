@@ -36,12 +36,14 @@ function getLockToken(progress) {
 }
 const answeredCount = progress => progress.answers.filter(item => item.answer.trim()).length;
 const isLocked = progress => progress.complete || progress.pending || progress.withdrawing;
-function newReceipt(name) {
-  return {name, token:newToken()};
+function newReceipt(name, year, major) {
+  return {name, year, major, token:newToken()};
 }
 function submissionPayload(group) {
   const progress = getProgress(group);
   return {version:catalog.version, group_id:group.id, english_name:progress.receipt.name,
+    university_year:progress.receipt.year || progress.year || state.year || '',
+    major:progress.receipt.major || progress.major || state.major || '',
     receipt_token:progress.receipt.token, lock_token:getLockToken(progress),
     answers:progress.answers.map(item => ({
       sample_id:item.sample_id, answer:item.answer,
@@ -346,16 +348,20 @@ function renderReview(group) {
 function renderName(group) {
   const progress = getProgress(group);
   if (answeredCount(progress) !== group.samples.length) { progress.view = 'review'; return renderReview(group); }
-  app.innerHTML = `<div class="workspace-top"><a class="text-button" href="#">← Pause & all groups</a><span class="workspace-meta">Group ${groupNumber(group)} · All questions answered</span></div><section class="finish-card"><div class="finish-icon" aria-hidden="true">✓</div><div class="eyebrow" style="justify-content:center">One last thing</div><h1>Who can we thank?</h1><p>You've answered all ${group.samples.length} questions.<br>Add your English name to submit your responses.</p><button class="secondary-button" id="review-answers">← Review or edit answers</button><form id="name-form"><label for="english-name" class="answer-label">Your English name</label><input id="english-name" class="name-input" autocomplete="name" maxlength="80" required placeholder="e.g. Alex Chen" value="${escapeHTML(state.name || '')}"><p class="input-help">Your name identifies your answers and may be used to thank volunteers in a future paper.</p><p class="error" id="submit-error" role="alert"></p><button class="primary-button full-width" type="submit">Submit my responses →</button></form><button class="understated danger-text" id="reset-group">Clear group</button></section>`;
+  app.innerHTML = `<div class="workspace-top"><a class="text-button" href="#">← Pause & all groups</a><span class="workspace-meta">Group ${groupNumber(group)} · All questions answered</span></div><section class="finish-card"><div class="finish-icon" aria-hidden="true">✓</div><div class="eyebrow" style="justify-content:center">One last thing</div><h1>Who can we thank?</h1><p>You've answered all ${group.samples.length} questions.<br>Add your English name, university year, and major to submit your responses.</p><button class="secondary-button" id="review-answers">← Review or edit answers</button><form id="name-form"><label for="english-name" class="answer-label">Your English name</label><input id="english-name" class="name-input" autocomplete="name" maxlength="80" required placeholder="e.g. Alex Chen" value="${escapeHTML(state.name || '')}"><p class="input-help">Your name identifies your answers and may be used to thank volunteers in a future paper.</p><label for="university-year" class="answer-label">University year</label><input id="university-year" class="name-input" maxlength="80" required placeholder="e.g. Undergraduate Year 3 / Master's Year 1 / PhD" value="${escapeHTML(state.year || '')}"><p class="input-help">Your current academic stage or year at university.</p><label for="major" class="answer-label">Major</label><input id="major" class="name-input" maxlength="120" required placeholder="e.g. Mathematics / Computer Science" value="${escapeHTML(state.major || '')}"><p class="input-help">Your primary field of study.</p><p class="error" id="submit-error" role="alert"></p><button class="primary-button full-width" type="submit">Submit my responses →</button></form><button class="understated danger-text" id="reset-group">Clear group</button></section>`;
   document.querySelector('#review-answers').onclick = () => showGroupView(group, 'review');
   document.querySelector('#reset-group').onclick = () => resetGroup(group);
   document.querySelector('#name-form').onsubmit = event => {
     event.preventDefault();
     const name = document.querySelector('#english-name').value.trim();
-    if (!name || busy) return;
+    const year = document.querySelector('#university-year').value.trim();
+    const major = document.querySelector('#major').value.trim();
+    if (!name || !year || !major || busy) return;
     state.name = name;
+    state.year = year;
+    state.major = major;
     getLockToken(progress);
-    progress.receipt = newReceipt(name);
+    progress.receipt = newReceipt(name, year, major);
     progress.pending = true;
     if (!save()) { progress.pending = false; progress.receipt = null; return; }
     submitGroup(group);
@@ -381,6 +387,8 @@ async function submitGroup(group) {
     progress.pending = false;
     progress.claimed = true;
     progress.name = progress.receipt.name;
+    progress.year = progress.receipt.year;
+    progress.major = progress.receipt.major;
     groupLocks[group.id] = {status:'completed', mine:true};
     save();
   } catch (failure) { error = failure.message; }
@@ -394,7 +402,7 @@ async function withdrawGroup(group) {
   if (busy || (!isLocked(progress) && !progress.receipt)) return;
   if (!progress.withdrawing && !window.confirm('Withdraw this group from the study? Your answers will stay on this browser so you can edit them or clear the group.')) return;
   if (!progress.receipt) {
-    progress.receipt = {...newReceipt(progress.name || state.name), legacy:true};
+    progress.receipt = {...newReceipt(progress.name || state.name, progress.year || state.year || '', progress.major || state.major || ''), legacy:true};
   }
   getLockToken(progress);
   progress.withdrawing = true;

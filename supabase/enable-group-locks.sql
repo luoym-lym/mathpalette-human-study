@@ -12,8 +12,120 @@ create table if not exists public.human_group_locks (
     foreign key (version, group_id) references public.human_study_groups(version, group_id)
 );
 
-alter table public.human_group_locks enable row level security;
+alter table public.human_Group_locks enable row level security;
 revoke all on public.human_group_locks from public, anon, authenticated;
+
+alter table public.human_responses
+    add column if not exists university_year text not null default '' check (char_length(university_year) <= 80),
+    add column if not exists major text not null default '' check (char_length(major) <= 120);
+
+create or replace function public.submit_human_group(payload jsonb)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $function$
+declare
+    participant text;
+    participant_year text;
+    participant_major text;
+    group_key text;
+    data_version text;
+    submitted jsonb;
+    expected jsonb;
+    received_ids jsonb;
+    record jsonb;
+    prior_count integer;
+    expected_count integer;
+begin
+    if jsonb_typeof(payload) is distinct from 'object' then
+        raise exception 'Invalid submission.' using errcode = '22023';
+    end if;
+    if jsonb_typeof(payload -> 'english_name') is distinct from 'string'
+       or jsonb_typeof(payload -> 'university_year') is distinct from 'string'
+       or jsonb_typeof(payload -> 'major') is distinct from 'string'
+       or jsonb_typeof(payload -> 'group_id') is distinct from 'string'
+       or jsonb_typeof(payload -> 'version') is distinct from 'string'
+       or jsonb_typeof(payload -> 'answers') is distinct from 'array' then
+        raise exception 'Invalid submission fields.' using errcode = '22023';
+    end if;
+    participant := btrim(payload ->> 'english_name');
+    participant_year := btrim(payload ->> 'university_year');
+    participant_major := btrim(payload ->> 'major');
+    group_key := payload ->> 'group_id';
+    data_version := payload ->> 'version';
+    submitted := payload -> 'answers';
+    if char_length(participant) not between 1 and 80
+       or char_length(participant_year) not between 1 and 80
+       or char_length(participant_major) not between 1 and 120
+       or pg_column_size(payload) > 2500000 then
+        raise exception 'Invalid submission size or participant profile.' using errcode = '22023';
+    end if;
+
+    select g.sample_ids into expected
+    from public.human_study_groups as g
+    where g.version = data_version and g.group_id = group_key;
+    if expected is null then
+        raise exception 'Unknown group or dataset version.' using errcode = '22023';
+    end if;
+
+    expected_count := jsonb_array_length(expected);
+    if jsonb_array_length(submitted) <> expected_count then
+        raise exception 'Please answer every question in this group.' using errcode = '22023';
+    end if;
+
+    for record in select value from jsonb_array_elements(submitted) loop
+        if jsonb_typeof(record) is distinct from 'object'
+           or jsonb_typeof(record -> 'sample_id') is distinct from 'string'
+           or jsonb_typeof(record -> 'answer') is distinct from 'string'
+           or jsonb_typeof(record -> 'time_seconds') is distinct from 'number' then
+            raise exception 'Invalid answer fields.' using errcode = '22023';
+        end if;
+        if char_length(btrim(record ->> 'answer')) < 1
+           or char_length(record ->> 'answer') > 5000
+           or (record ->> 'time_seconds')::numeric not between 0 and 2678400 then
+            raise exception 'Invalid answer or question time.' using errcode = '22023';
+        end if;
+    end loop;
+
+    select jsonb_agg(value -> 'sample_id' order by position) into received_ids
+    from jsonb_array_elements(submitted) with ordinality as items(value, position);
+    if received_ids is distinct from expected then
+        raise exception 'The answers do not match this fixed question group.' using errcode = '22023';
+    end if;
+
+    perform pg_advisory_xact_lock(hashtextextended(
+        jsonb_build_array(participant, group_key, data_version)::text, 0));
+    select count(*) into prior_count from public.human_responses as r
+    where r.english_name = participant and r.group_id = group_key and r.version = data_version;
+
+    if prior_count > 0 then
+        if prior_count = expected_count and not exists (
+            select 1
+            from jsonb_array_elements(submitted) as items(value)
+            left join public.human_responses as r
+              on r.english_name = participant and r.group_id = group_key
+             and r.version = data_version and r.sample_id = items.value ->> 'sample_id'
+            where r.sample_id is null
+               or r.university_year is distinct from participant_year
+               or r.major is distinct from participant_major
+               or r.answer is distinct from (items.value ->> 'answer')
+               or r.time_seconds is distinct from (items.value ->> 'time_seconds')::numeric
+        ) then
+            return jsonb_build_object('saved', true);
+        end if;
+        raise exception 'This name already has different responses for this group. Please choose another group.'
+            using errcode = '23505';
+    end if;
+
+    insert into public.human_responses (english_name, university_year, major, group_id, sample_id, answer, time_seconds, version)
+    select participant, participant_year, participant_major, group_key, value ->> 'sample_id', value ->> 'answer',
+           (value ->> 'time_seconds')::numeric, data_version
+    from jsonb_array_elements(submitted);
+    return jsonb_build_object('saved', true);
+end;
+$function$;
+revoke all on function public.submit_human_group(jsonb) from public, anon, authenticated;
 
 -- Backfill locks from any active non-withdrawn receipts.
 insert into public.human_group_locks (version, group_id, token_hash, status, updated_at)
