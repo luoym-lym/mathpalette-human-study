@@ -116,10 +116,10 @@ setInterval(() => { if (active) { checkpoint(); resumeTimer(); } }, 1000);
 
 
 function home() {
-  app.innerHTML = `<section class="survey-home"><h1>MathPalette questionnaire</h1>
+  app.innerHTML = `<section class="survey-home">
 <ol class="study-notes" aria-label="Participation notes">
 <li><strong>Any readable answer format is accepted</strong>, such as <code>sqrt(x)</code>, <code>√x</code>, or <code>4pi</code>. Fractions and irrational numbers may be left in exact form or rounded to any number of decimal places. Answers will be evaluated manually.</li>
-<li>If a question is too difficult, select <strong>“I don’t know”</strong> to skip it.</li>
+<li>If a question is too difficult, select <strong>“I don’t know”</strong> to skip it (but please try your best to answer).</li>
 <li>You may use tools, including calculators, but <strong>AI assistance is not allowed</strong>.</li>
 <li>We will collect your answers and the time spent on each question.</li>
 <li>All collected data will be used <strong>solely for academic research</strong>.</li>
