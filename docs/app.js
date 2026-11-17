@@ -116,7 +116,7 @@ async function syncGroupLocks() {
   const nextLocks = {};
   for (const group of catalog.groups) {
     const slots = {};
-    let myVersion = null, myStatus = null, occupied = 0, completedCount = 0;
+    let myVersion = null, myStatus = null, occupied = 0, completedCount = 0, otherOccupied = 0, otherCompleted = 0;
     for (let i = 0; i < versions.length; i++) {
       const version = versions[i];
       const info = results[i].groups[group.id];
@@ -127,6 +127,9 @@ async function syncGroupLocks() {
         if (info.mine && !myVersion) {
           myVersion = version;
           myStatus = info.status;
+        } else if (!info.mine) {
+          otherOccupied++;
+          if (info.status === 'completed') otherCompleted++;
         }
       }
     }
@@ -135,6 +138,9 @@ async function syncGroupLocks() {
       slotVersion:myVersion,
       status:myVersion ? myStatus : (completedCount >= versions.length ? 'completed' : 'in_progress'),
       occupied,
+      completedCount,
+      otherOccupied,
+      otherCompleted,
       capacity:versions.length,
       lockedByOther:!myVersion && occupied >= versions.length,
       slots
@@ -324,6 +330,13 @@ function renderCards() {
     }
     const count = answeredCount(progress);
     const started = Boolean(progress.claimed || count > 0 || progress.answers.some(item => item.time_seconds > 0));
+    const otherOccupied = remote ? remote.otherOccupied : 0;
+    const otherCompleted = remote ? remote.otherCompleted : 0;
+    const openDetail = otherOccupied >= 1
+      ? (otherCompleted >= 1
+          ? (isZh ? '可作答 · 有1人完成作答' : 'Open · 1 completed')
+          : (isZh ? '可作答 · 有1人正在作答' : 'Open · 1 in progress'))
+      : `${isZh ? '可作答' : 'Open'}<span class="priority-badge">${isZh ? '优先' : 'Priority'}</span>`;
     const tag = progress.withdrawing
       ? (isZh ? '撤回中' : 'Withdrawing')
       : progress.complete
@@ -332,7 +345,7 @@ function renderCards() {
           ? (isZh ? '提交中' : 'Pending')
           : started
             ? (isZh ? '进行中' : 'In progress')
-            : (isZh ? '可作答' : 'Open');
+            : openDetail;
     const action = progress.complete
       ? (isZh ? '查看' : 'View')
       : progress.pending || progress.withdrawing || started
