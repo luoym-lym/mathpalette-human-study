@@ -123,6 +123,7 @@ function home() {
 <li>You may use tools, including calculators, but <strong>AI assistance is not allowed</strong>.</li>
 <li>We will collect your answers and the time spent on each question.</li>
 <li>All collected data will be used <strong>solely for academic research</strong>.</li>
+<li>We do not ask for your contact information, so we will not send you your results. Individual results are not the focus of this study; your responses will mainly be used for statistical analysis.</li>
 <li>The English name you enter will be used only to distinguish participants and potentially acknowledge your contribution. <strong>You do not need to use your real name.</strong></li>
 </ol>
 <p>Choose a group and answer independently. You can pause and continue in the same browser.</p><div class="groups" id="groups" aria-label="Question groups"></div></section>`;
