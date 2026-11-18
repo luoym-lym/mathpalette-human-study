@@ -34,8 +34,6 @@ function getLockToken(progress) {
   }
   return progress.lockToken;
 }
-const slotVersions = () => [catalog.version, `${catalog.version}#2`];
-const getGroupVersion = progress => (progress && progress.slotVersion) || catalog.version;
 const answeredCount = progress => progress.answers.filter(item => item.answer.trim()).length;
 const isLocked = progress => progress.complete || progress.pending || progress.withdrawing;
 function newReceipt(name, year, major) {
@@ -43,7 +41,7 @@ function newReceipt(name, year, major) {
 }
 function submissionPayload(group) {
   const progress = getProgress(group);
-  return {version:getGroupVersion(progress), group_id:group.id, english_name:progress.receipt.name,
+  return {version:catalog.version, group_id:group.id, english_name:progress.receipt.name,
     university_year:progress.receipt.year || progress.year || state.year || '',
     major:progress.receipt.major || progress.major || state.major || '',
     receipt_token:progress.receipt.token, lock_token:getLockToken(progress),
@@ -75,33 +73,6 @@ async function rpc(endpoint, payload) {
     throw error;
   } finally { clearTimeout(timeout); }
 }
-async function claimGroupSlot(group, progress) {
-  const token = getLockToken(progress);
-  const versions = slotVersions();
-  const preferred = progress.slotVersion && versions.includes(progress.slotVersion)
-    ? [progress.slotVersion, ...versions.filter(v => v !== progress.slotVersion)]
-    : versions;
-  const slots = (groupLocks[group.id] && groupLocks[group.id].slots) || {};
-  const candidates = [
-    ...preferred.filter(v => slots[v] && slots[v].mine),
-    ...preferred.filter(v => !slots[v]),
-    ...preferred.filter(v => slots[v] && !slots[v].mine)
-  ];
-  let lastError = null;
-  for (const version of candidates) {
-    try {
-      const result = await rpc('claim_human_group', {version, group_id:group.id, lock_token:token});
-      if (result && result.claimed === true) {
-        progress.claimed = true;
-        progress.slotVersion = version;
-        return {claimed:true, status:result.status || 'in_progress', slotVersion:version};
-      }
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  throw lastError || new Error('Could not lock this group. Please retry.');
-}
 async function syncGroupLocks() {
   if (!catalog) return false;
   const tokens = {};
@@ -110,53 +81,18 @@ async function syncGroupLocks() {
     const token = progress && (progress.lockToken || (progress.receipt && progress.receipt.token));
     if (token) tokens[group.id] = token;
   }
-  const versions = slotVersions();
-  const results = await Promise.all(versions.map(version => rpc('list_human_group_locks', {version, tokens})));
-  if (results.some(result => !result || typeof result.groups !== 'object' || result.groups === null)) return false;
-  const nextLocks = {};
-  for (const group of catalog.groups) {
-    const slots = {};
-    let myVersion = null, myStatus = null, occupied = 0, completedCount = 0, otherOccupied = 0, otherCompleted = 0;
-    for (let i = 0; i < versions.length; i++) {
-      const version = versions[i];
-      const info = results[i].groups[group.id];
-      if (info) {
-        slots[version] = info;
-        occupied++;
-        if (info.status === 'completed') completedCount++;
-        if (info.mine && !myVersion) {
-          myVersion = version;
-          myStatus = info.status;
-        } else if (!info.mine) {
-          otherOccupied++;
-          if (info.status === 'completed') otherCompleted++;
-        }
-      }
-    }
-    nextLocks[group.id] = {
-      mine:Boolean(myVersion),
-      slotVersion:myVersion,
-      status:myVersion ? myStatus : (completedCount >= versions.length ? 'completed' : 'in_progress'),
-      occupied,
-      completedCount,
-      otherOccupied,
-      otherCompleted,
-      capacity:versions.length,
-      lockedByOther:!myVersion && occupied >= versions.length,
-      slots
-    };
-  }
-  groupLocks = nextLocks;
+  const result = await rpc('list_human_group_locks', {version:catalog.version, tokens});
+  if (!result || typeof result.groups !== 'object' || result.groups === null) return false;
+  groupLocks = result.groups;
   for (const group of catalog.groups) {
     const progress = state.groups[group.id];
     const remote = groupLocks[group.id];
     if (!progress) continue;
     if (remote && remote.mine) {
       progress.claimed = true;
-      progress.slotVersion = remote.slotVersion;
       continue;
     }
-    if (remote && remote.lockedByOther) {
+    if (remote && !remote.mine) {
       progress.claimed = false;
       continue;
     }
@@ -164,20 +100,14 @@ async function syncGroupLocks() {
     const hasLocalWork = Boolean(progress.claimed || count > 0 || (progress.answers || []).some(item => item.time_seconds > 0));
     if (hasLocalWork && !isLocked(progress)) {
       try {
-        getLockToken(progress);
+        const token = getLockToken(progress);
         save();
-        const claimed = await claimGroupSlot(group, progress);
+        const claimed = await rpc('claim_human_group', {version:catalog.version, group_id:group.id, lock_token:token});
         if (claimed && claimed.claimed) {
-          remote.mine = true;
-          remote.slotVersion = claimed.slotVersion;
-          remote.status = claimed.status;
-          remote.slots[claimed.slotVersion] = {status:claimed.status, mine:true};
-          remote.occupied = Object.keys(remote.slots).length;
-          remote.lockedByOther = false;
+          progress.claimed = true;
+          groupLocks[group.id] = {status:claimed.status || 'in_progress', mine:true};
         }
-      } catch {
-        progress.claimed = false;
-      }
+      } catch { /* Another participant may have claimed it concurrently. */ }
     }
   }
   save();
@@ -195,23 +125,21 @@ async function resetGroup(group) {
   busy = true;
   try {
     const token = progress.lockToken || (progress.receipt && progress.receipt.token);
-    const remote = groupLocks[group.id];
-    if (token && (progress.claimed || (remote && remote.mine))) {
-      const releaseVersion = (remote && remote.slotVersion) || getGroupVersion(progress);
+    if (token && (progress.claimed || (groupLocks[group.id] && groupLocks[group.id].mine))) {
       const result = await rpc('release_human_group', {
-        version:releaseVersion, group_id:group.id, lock_token:token
+        version:catalog.version, group_id:group.id, lock_token:token
       });
       if (!result || result.released !== true) {
         throw new Error('The server did not confirm unlocking this group. Please retry.');
       }
     }
+    delete groupLocks[group.id];
     delete state.groups[group.id];
     if (!save()) {
       state.groups[group.id] = progress;
       if (wasActive) renderQuestion(group);
       return;
     }
-    await syncGroupLocks().catch(() => { delete groupLocks[group.id]; });
     location.hash = '#';
     home(true);
     notify('Group ' + groupNumber(group) + ' cleared. It is open again.');
@@ -282,7 +210,7 @@ ${isZh ? `<ol class="study-notes" aria-label="作答注意事项">
 <li>我们保证<strong>仅将收集的数据用于学术用途</strong>。</li>
 <li>由于我们不要求您填写联系方式，我们也不会向您返回您的作答结果（这也并不重要）。您的作答结果主要用于数据统计。</li>
 <li>填写的英文名仅用于区分作答者以及可能的致谢，<strong>不要求填写真名</strong>。</li>
-<li>每组题目最多由<strong>两人</strong>作答，点击开始即会占用一个名额（满两人后该组锁定）。如果决定不作答，请及时退出并点击 <strong>“清空本组”（Clear group）</strong> 以释放名额。</li>
+<li>点击开始后<strong>该组题目即会被锁定</strong>，其他人无法再作答。如果决定不作答，请及时退出并点击 <strong>“清空本组”（Clear group）</strong> 以解除锁定。</li>
 <li>我们非常抱歉暂时难以提供题目的中文版本。如果遇到难以理解的词汇希望您能自行查询。</li>
 </ol>
 <p>请选择一组题目独立作答。在同一浏览器中可以随时暂停并继续。</p>` : `<ol class="study-notes" aria-label="Participation notes">
@@ -293,7 +221,7 @@ ${isZh ? `<ol class="study-notes" aria-label="作答注意事项">
 <li>All collected data will be used <strong>solely for academic research</strong>.</li>
 <li>We do not ask for your contact information, so we will not send you your results. Individual results are not the focus of this study; your responses will mainly be used for statistical analysis.</li>
 <li>The English name you enter will be used only to distinguish participants and potentially acknowledge your contribution. <strong>You do not need to use your real name.</strong></li>
-<li>Each group accepts up to <strong>two participants</strong>; starting a group reserves one slot (the group locks once two participants have started). If you decide not to complete it, please exit promptly and click <strong>“Clear group”</strong> to release your slot.</li>
+<li>Once you start a group, <strong>it will be locked</strong> so others cannot work on it. If you decide not to complete it, please exit promptly and click <strong>“Clear group”</strong> to release the lock.</li>
 </ol>
 <p>Choose a group and answer independently. You can pause and continue in the same browser.</p>`}<div class="groups" id="groups" aria-label="Question groups"></div></section>`;
   document.querySelectorAll('[data-lang]').forEach(button => {
@@ -319,7 +247,7 @@ function renderCards() {
   container.innerHTML = catalog.groups.map(group => {
     const progress = getProgress(group);
     const remote = groupLocks[group.id];
-    const lockedByOther = Boolean(remote && remote.lockedByOther);
+    const lockedByOther = Boolean(remote && !remote.mine);
     const groupTitle = isZh ? `第 ${groupNumber(group)} 组` : `Group ${groupNumber(group)}`;
     const countLabel = isZh ? `${group.samples.length} 题` : `${group.samples.length} questions`;
     if (lockedByOther) {
@@ -330,13 +258,6 @@ function renderCards() {
     }
     const count = answeredCount(progress);
     const started = Boolean(progress.claimed || count > 0 || progress.answers.some(item => item.time_seconds > 0));
-    const otherOccupied = remote ? remote.otherOccupied : 0;
-    const otherCompleted = remote ? remote.otherCompleted : 0;
-    const openDetail = otherOccupied >= 1
-      ? (otherCompleted >= 1
-          ? (isZh ? '可作答 · 有1人完成作答' : 'Open · 1 completed')
-          : (isZh ? '可作答 · 有1人正在作答' : 'Open · 1 in progress'))
-      : `${isZh ? '可作答' : 'Open'}<span class="priority-badge">${isZh ? '优先' : 'Priority'}</span>`;
     const tag = progress.withdrawing
       ? (isZh ? '撤回中' : 'Withdrawing')
       : progress.complete
@@ -345,7 +266,7 @@ function renderCards() {
           ? (isZh ? '提交中' : 'Pending')
           : started
             ? (isZh ? '进行中' : 'In progress')
-            : openDetail;
+            : (isZh ? '可作答' : 'Open');
     const action = progress.complete
       ? (isZh ? '查看' : 'View')
       : progress.pending || progress.withdrawing || started
@@ -361,10 +282,10 @@ function renderCards() {
 async function enterGroup(group) {
   const progress = getProgress(group);
   const remote = groupLocks[group.id];
-  if (remote && remote.lockedByOther) {
+  if (remote && !remote.mine) {
     location.hash = '#';
     home(true);
-    notify('Group ' + groupNumber(group) + ' is locked by two participants. Please choose another group.');
+    notify('Group ' + groupNumber(group) + ' is locked by another participant. Please choose another group.');
     return;
   }
   if (isLocked(progress) || (progress.claimed && remote && remote.mine)) {
@@ -373,19 +294,16 @@ async function enterGroup(group) {
   }
   app.innerHTML = `<div class="loading">Locking Group ${groupNumber(group)}…</div>`;
   try {
-    getLockToken(progress);
+    const token = getLockToken(progress);
     if (!save()) return;
-    const result = await claimGroupSlot(group, progress);
-    const prev = groupLocks[group.id] || {slots:{}, capacity:slotVersions().length};
-    prev.slots[result.slotVersion] = {status:result.status || 'in_progress', mine:true};
-    groupLocks[group.id] = {
-      ...prev,
-      mine:true,
-      slotVersion:result.slotVersion,
-      status:result.status || 'in_progress',
-      occupied:Object.keys(prev.slots).length,
-      lockedByOther:false
-    };
+    const result = await rpc('claim_human_group', {
+      version:catalog.version, group_id:group.id, lock_token:token
+    });
+    if (!result || result.claimed !== true) {
+      throw new Error('Could not lock this group. Please retry.');
+    }
+    progress.claimed = true;
+    groupLocks[group.id] = {status:result.status || 'in_progress', mine:true};
     save();
     if (location.hash === `#group/${group.id}`) renderQuestion(group);
   } catch (error) {
@@ -507,26 +425,15 @@ async function submitGroup(group) {
   renderPending(group);
   let error = '';
   try {
-    const payload = submissionPayload(group);
-    const result = await rpc('submit_human_group_v2', payload);
+    const result = await rpc('submit_human_group_v2', submissionPayload(group));
     if (result.saved !== true) throw new Error('The server did not confirm receipt. Please retry.');
     progress.complete = true;
     progress.pending = false;
     progress.claimed = true;
-    progress.slotVersion = payload.version;
     progress.name = progress.receipt.name;
     progress.year = progress.receipt.year;
     progress.major = progress.receipt.major;
-    const prev = groupLocks[group.id] || {slots:{}, capacity:slotVersions().length};
-    prev.slots[payload.version] = {status:'completed', mine:true};
-    groupLocks[group.id] = {
-      ...prev,
-      mine:true,
-      slotVersion:payload.version,
-      status:'completed',
-      occupied:Object.keys(prev.slots).length,
-      lockedByOther:false
-    };
+    groupLocks[group.id] = {status:'completed', mine:true};
     save();
   } catch (failure) { error = failure.message; }
   finally { busy = false; }
@@ -565,16 +472,7 @@ async function withdrawGroup(group) {
     progress.claimed = true;
     progress.receipt = null;
     progress.view = 'review';
-    const prev = groupLocks[group.id] || {slots:{}, capacity:slotVersions().length};
-    prev.slots[payload.version] = {status:'in_progress', mine:true};
-    groupLocks[group.id] = {
-      ...prev,
-      mine:true,
-      slotVersion:payload.version,
-      status:'in_progress',
-      occupied:Object.keys(prev.slots).length,
-      lockedByOther:false
-    };
+    groupLocks[group.id] = {status:'in_progress', mine:true};
     save();
   } catch (failure) { error = failure.message; }
   finally { busy = false; }
